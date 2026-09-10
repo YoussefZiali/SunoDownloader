@@ -222,7 +222,7 @@ export async function convertTrackToFormat(
 
   let res = await fetch(downloadUrl);
   if (!res.ok) {
-    // Resilient fallback to audio stream, proxy audio, or direct CDN
+    // Resilient fallback to audio stream or proxy audio
     const streamFallback = `/api/suno/stream/${track.id}.mp3`;
     try {
       const fallbackRes = await fetch(streamFallback);
@@ -233,22 +233,10 @@ export async function convertTrackToFormat(
         const proxyRes = await fetch(proxyFallback);
         if (proxyRes.ok) {
           res = proxyRes;
-        } else {
-          const directRes = await fetch(`https://cdn1.suno.ai/${track.id}.mp4`);
-          if (directRes.ok) {
-            res = directRes;
-          }
         }
       }
     } catch {
-      try {
-        const directRes = await fetch(`https://cdn1.suno.ai/${track.id}.mp4`);
-        if (directRes.ok) {
-          res = directRes;
-        }
-      } catch {
-        // ignore
-      }
+      // ignore fallback error and report original
     }
   }
 
