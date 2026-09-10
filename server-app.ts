@@ -1,12 +1,13 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 
 const app = express();
 
-const CACHE_DIR = '/tmp/suno_cache';
+const CACHE_DIR = path.join(os.tmpdir(), 'suno_cache');
 if (!fs.existsSync(CACHE_DIR)) {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -27,7 +28,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// Resilient body parsing: recognize pre-parsed bodies on Vercel Serverless
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    (req as any)._body = true;
+  }
+  next();
+});
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Cached detection of ffmpeg availability on host system
 let hasFfmpegCache: boolean | null = null;
@@ -723,11 +732,12 @@ function makeContentDisposition(filename: string): string {
 }
 
 // -------------------------------------------------------------
-// API ROUTES
+// API ROUTER (Handles both /api/* and direct /suno/* /health)
 // -------------------------------------------------------------
+const apiRouter = express.Router();
 
 // System Health & Diagnostics
-app.get('/api/health', async (req: Request, res: Response) => {
+apiRouter.get('/health', async (req: Request, res: Response) => {
   const hasFfmpeg = await isFfmpegAvailable();
   res.json({
     status: 'ok',
@@ -738,7 +748,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
 });
 
 // Master API to resolve ANY Suno link (including short links https://suno.com/s/...)
-app.all('/api/suno/resolve', async (req: Request, res: Response) => {
+apiRouter.all('/suno/resolve', async (req: Request, res: Response) => {
   try {
     const url = (req.body?.url || req.query?.url) as string;
     if (!url || typeof url !== 'string') {
@@ -812,7 +822,7 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
 });
 
 // API to resolve multiple Suno URLs in bulk
-app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
+apiRouter.post('/suno/resolve-batch', async (req: Request, res: Response) => {
   try {
     const { urls } = req.body;
     if (!Array.isArray(urls) || urls.length === 0) {
@@ -864,7 +874,7 @@ app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
 });
 
 // API to parse arbitrary text/URLs
-app.post('/api/suno/parse', async (req: Request, res: Response) => {
+apiRouter.post('/suno/parse', async (req: Request, res: Response) => {
   try {
     const { input } = req.body;
     if (!input || typeof input !== 'string') {
@@ -882,7 +892,7 @@ app.post('/api/suno/parse', async (req: Request, res: Response) => {
 });
 
 // API to fetch Suno Track metadata by ID
-app.get('/api/suno/track/:id', async (req: Request, res: Response) => {
+apiRouter.get('/suno/track/:id', async (req: Request, res: Response) => {
   const rawId = req.params.id;
   if (!rawId) {
     return res.status(400).json({ error: 'Track ID is required' });
@@ -900,7 +910,7 @@ app.get('/api/suno/track/:id', async (req: Request, res: Response) => {
 });
 
 // API to fetch Suno playlist
-app.get('/api/suno/playlist/:id', async (req: Request, res: Response) => {
+apiRouter.get('/suno/playlist/:id', async (req: Request, res: Response) => {
   const playlistId = req.params.id;
   const sh = (req.query.sh as string) || '';
   try {
@@ -912,7 +922,7 @@ app.get('/api/suno/playlist/:id', async (req: Request, res: Response) => {
 });
 
 // Direct Audio Stream endpoint with Range header & seeking support
-app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
+apiRouter.get('/suno/stream/:id', async (req: Request, res: Response) => {
   const rawId = req.params.id;
   if (!rawId) {
     return res.status(400).json({ error: 'Track ID required' });
@@ -925,14 +935,14 @@ app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
     const result = await transcodeTrack(trackId, 'mp3', '320k');
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(result.filePath, { acceptRanges: true });
+    return res.sendFile(path.resolve(result.filePath), { acceptRanges: true });
   } catch (err: any) {
     console.warn(`Stream transcode fallback for ${trackId}:`, err.message);
     try {
       const rawPath = await getDecryptedAudioPath(trackId);
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(rawPath, { acceptRanges: true });
+      return res.sendFile(path.resolve(rawPath), { acceptRanges: true });
     } catch (fallbackErr: any) {
       console.error(`Stream delivery failure for ${trackId}:`, fallbackErr.message);
       return res.status(500).json({ error: `Audio stream unavailable: ${err.message}` });
@@ -941,7 +951,7 @@ app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
 });
 
 // Dedicated audio export & download endpoint
-app.get('/api/suno/download', async (req: Request, res: Response) => {
+apiRouter.get('/suno/download', async (req: Request, res: Response) => {
   const rawId = req.query.id as string;
   const uuidMatch = rawId?.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
   const trackId = uuidMatch ? uuidMatch[0] : rawId?.trim();
@@ -990,7 +1000,7 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Content-Disposition', makeContentDisposition(safeFilename));
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(result.filePath, { acceptRanges: true });
+    return res.sendFile(path.resolve(result.filePath), { acceptRanges: true });
   } catch (err: any) {
     console.error(`Download failed for ${trackId}:`, err);
     try {
@@ -998,7 +1008,7 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
       const fallbackFilename = `${sanitize(artist)} - ${sanitize(title)}.m4a`;
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Content-Disposition', makeContentDisposition(fallbackFilename));
-      return res.sendFile(rawFallback, { acceptRanges: true });
+      return res.sendFile(path.resolve(rawFallback), { acceptRanges: true });
     } catch {
       return res.status(500).json({ error: `Audio processing error: ${err.message}` });
     }
@@ -1006,7 +1016,7 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
 });
 
 // Audio proxy to bypass browser CORS for WebAudio decoding and direct streaming
-app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
+apiRouter.get('/suno/proxy-audio', async (req: Request, res: Response) => {
   const audioUrl = req.query.url as string;
   if (!audioUrl) {
     return res.status(400).json({ error: 'Missing url query param' });
@@ -1020,7 +1030,7 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
       const localFile = await getDecryptedAudioPath(trackUuid);
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(localFile, { acceptRanges: true });
+      return res.sendFile(path.resolve(localFile), { acceptRanges: true });
     } catch (e: any) {
       console.warn(`proxy-audio decrypt fallback for ${trackUuid}:`, e.message);
     }
@@ -1107,7 +1117,7 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
 });
 
 // Image proxy for clean thumbnail loading & album art bundling
-app.get('/api/suno/proxy-image', async (req: Request, res: Response) => {
+apiRouter.get('/suno/proxy-image', async (req: Request, res: Response) => {
   const imageUrl = req.query.url as string;
   if (!imageUrl) {
     return res.status(400).json({ error: 'Missing url query param' });
@@ -1130,6 +1140,15 @@ app.get('/api/suno/proxy-image', async (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Image proxy error' });
   }
+});
+
+// Mount router on /api (standard) and fallback on direct path for serverless rewrites
+app.use('/api', apiRouter);
+app.use((req, res, next) => {
+  if (req.path.startsWith('/suno') || req.path === '/health') {
+    return apiRouter(req, res, next);
+  }
+  next();
 });
 
 export { app };
