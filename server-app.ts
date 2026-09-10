@@ -42,6 +42,9 @@ app.use((req: Request, res: Response, next: any) => {
 let hasFfmpegCache: boolean | null = null;
 async function isFfmpegAvailable(): Promise<boolean> {
   if (hasFfmpegCache !== null) return hasFfmpegCache;
+  if (FFMPEG_BIN && fs.existsSync(FFMPEG_BIN)) {
+    try { fs.chmodSync(FFMPEG_BIN, 0o755); } catch {}
+  }
   return new Promise((resolve) => {
     execFile(FFMPEG_BIN, ['-version'], (err) => {
       hasFfmpegCache = !err;
@@ -375,26 +378,25 @@ async function transcodeTrack(
         if (coverImagePath) {
           inputArgs.push('-i', coverImagePath);
           audioArgs = [
-            '-map', '0:a',
-            '-map', '1:v',
+            '-map', '0:a:0',
+            '-map', '1:0',
             '-c:a', 'libmp3lame',
             '-b:a', safeBitrate || '320k',
-            '-c:v', 'copy',
+            '-c:v', 'mjpeg',
+            '-disposition:v', 'attached_pic',
             '-id3v2_version', '3',
-            '-metadata:s:v', 'title=Album cover',
-            '-metadata:s:v', 'comment=Cover (front)',
           ];
         } else {
-          audioArgs = ['-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3'];
+          audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3'];
         }
       } else if (format === 'wav') {
-        audioArgs = ['-vn', '-c:a', bitDepth === '16-bit' ? 'pcm_s16le' : 'pcm_s24le'];
+        audioArgs = ['-map', '0:a:0', '-vn', '-c:a', bitDepth === '16-bit' ? 'pcm_s16le' : 'pcm_s24le'];
       } else if (format === 'flac') {
-        audioArgs = ['-vn', '-c:a', 'flac'];
+        audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'flac'];
       } else if (format === 'm4a') {
-        audioArgs = ['-vn', '-c:a', 'aac', '-b:a', '256k'];
+        audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'aac', '-b:a', '256k'];
       } else if (format === 'ogg') {
-        audioArgs = ['-vn', '-c:a', 'libvorbis', '-q:a', '7'];
+        audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'libvorbis', '-q:a', '7'];
       }
 
       if (filters.length > 0) {
@@ -419,11 +421,12 @@ async function transcodeTrack(
         activeTranscodes.delete(cacheKey);
         if (err) {
           console.warn(`ffmpeg transcode warning for ${trackId} (${format}):`, err.message);
-          // If mp3 with cover failed, retry without cover
-          if (format === 'mp3' && coverImagePath) {
-            execFile(FFMPEG_BIN, ['-y', '-i', inputPath, '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3', ...metaArgs, outPath], (fallbackErr) => {
+          // If mp3 with cover failed, retry simple mp3 without cover
+          if (format === 'mp3') {
+            const retryArgs = ['-y', '-i', inputPath, '-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3', ...metaArgs, outPath];
+            execFile(FFMPEG_BIN, retryArgs, (fallbackErr) => {
               if (fallbackErr) {
-                // If ffmpeg still fails, resolve to raw decrypted audio
+                console.error(`ffmpeg simple fallback failed for ${trackId}:`, fallbackErr.message);
                 resolve(inputPath);
               } else {
                 resolve(outPath);
@@ -431,7 +434,6 @@ async function transcodeTrack(
             });
             return;
           }
-          // Fallback to raw decrypted file so download / stream never breaks
           resolve(inputPath);
         } else {
           resolve(outPath);
