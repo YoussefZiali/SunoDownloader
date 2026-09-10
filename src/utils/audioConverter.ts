@@ -195,6 +195,7 @@ export async function convertTrackToFormat(
     title: effectiveTrack.title,
     artist: effectiveTrack.artist,
     cover: track.image_url || '',
+    audioUrl: track.audio_url || '',
   });
 
   if (options?.startTime != null && !isNaN(options.startTime)) {
