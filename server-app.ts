@@ -1283,4 +1283,6 @@ app.get('/api/suno/proxy-audio', handleProxyAudioReq);
 app.get('/api/suno/proxy-image', handleProxyImageReq);
 
 export { app };
-export default app;
+export default function handler(req: any, res: any) {
+  return app(req, res);
+}

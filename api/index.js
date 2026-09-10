@@ -26,14 +26,25 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// api/index.ts
-var index_exports = {};
-__export(index_exports, {
-  default: () => handler
-});
-module.exports = __toCommonJS(index_exports);
-
 // server-app.ts
+var server_app_exports = {};
+__export(server_app_exports, {
+  app: () => app,
+  default: () => handler,
+  handleDownloadReq: () => handleDownloadReq,
+  handleHealthReq: () => handleHealthReq,
+  handleParseReq: () => handleParseReq,
+  handlePlaylistReq: () => handlePlaylistReq,
+  handleProxyAudioReq: () => handleProxyAudioReq,
+  handleProxyImageReq: () => handleProxyImageReq,
+  handleResolveBatchReq: () => handleResolveBatchReq,
+  handleResolveReq: () => handleResolveReq,
+  handleStreamReq: () => handleStreamReq,
+  handleTrackReq: () => handleTrackReq,
+  parseRequestBody: () => parseRequestBody,
+  sendJsonResponse: () => sendJsonResponse
+});
+module.exports = __toCommonJS(server_app_exports);
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
@@ -1127,9 +1138,22 @@ app.get("/api/suno/stream/:id", handleStreamReq);
 app.get("/api/suno/download", handleDownloadReq);
 app.get("/api/suno/proxy-audio", handleProxyAudioReq);
 app.get("/api/suno/proxy-image", handleProxyImageReq);
-var server_app_default = app;
-
-// api/index.ts
 function handler(req, res) {
-  return server_app_default(req, res);
+  return app(req, res);
 }
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  app,
+  handleDownloadReq,
+  handleHealthReq,
+  handleParseReq,
+  handlePlaylistReq,
+  handleProxyAudioReq,
+  handleProxyImageReq,
+  handleResolveBatchReq,
+  handleResolveReq,
+  handleStreamReq,
+  handleTrackReq,
+  parseRequestBody,
+  sendJsonResponse
+});
