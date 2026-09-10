@@ -801,13 +801,56 @@ function makeContentDisposition(filename: string): string {
 // API ROUTES
 // -------------------------------------------------------------
 
-// -------------------------------------------------------------
-// API ROUTE HANDLERS
-// -------------------------------------------------------------
+export async function parseRequestBody(req: any): Promise<any> {
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+      return req.body;
+    }
+    if (typeof req.body === 'string') {
+      try { return JSON.parse(req.body); } catch { return {}; }
+    }
+    if (Buffer.isBuffer(req.body)) {
+      try { return JSON.parse(req.body.toString('utf-8')); } catch { return {}; }
+    }
+  }
+
+  return new Promise((resolve) => {
+    let data = '';
+    req.on?.('data', (chunk: any) => {
+      data += chunk;
+    });
+    req.on?.('end', () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        resolve({});
+      }
+    });
+    req.on?.('error', () => {
+      resolve({});
+    });
+    if (req.readable === false || req.complete) {
+      resolve({});
+    }
+  });
+}
+
+export function sendJsonResponse(res: any, statusCode: number, data: any) {
+  try {
+    if (typeof res.status === 'function' && typeof res.json === 'function') {
+      return res.status(statusCode).json(data);
+    }
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify(data));
+  } catch (e) {
+    console.error('Error sending JSON response:', e);
+  }
+}
 
 export async function handleHealthReq(req: any, res: any) {
   const hasFfmpeg = await isFfmpegAvailable();
-  return res.json({
+  return sendJsonResponse(res, 200, {
     status: 'ok',
     ffmpeg: hasFfmpeg,
     timestamp: new Date().toISOString(),
@@ -817,13 +860,10 @@ export async function handleHealthReq(req: any, res: any) {
 
 export async function handleResolveReq(req: any, res: any) {
   try {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try { body = JSON.parse(body); } catch {}
-    }
+    const body = await parseRequestBody(req);
     const url = (body?.url || req.query?.url) as string;
     if (!url || typeof url !== 'string') {
-      return res.status(400).json({ error: 'URL is required' });
+      return sendJsonResponse(res, 400, { error: 'URL is required' });
     }
 
     const { resolvedUrl, shareCode } = await resolveSunoShareUrl(url);
@@ -840,7 +880,7 @@ export async function handleResolveReq(req: any, res: any) {
       } catch {}
 
       const playlist = await fetchPlaylistData(playlistId, sh);
-      return res.json({
+      return sendJsonResponse(res, 200, {
         type: 'playlist',
         resolvedUrl,
         playlist,
@@ -854,7 +894,7 @@ export async function handleResolveReq(req: any, res: any) {
 
       if (resolvedUrl.includes('/song/') || resolvedUrl.includes('/clip/')) {
         const track = await fetchTrackData(targetId);
-        return res.json({
+        return sendJsonResponse(res, 200, {
           type: 'song',
           resolvedUrl,
           track,
@@ -863,7 +903,7 @@ export async function handleResolveReq(req: any, res: any) {
 
       try {
         const track = await fetchTrackData(targetId);
-        return res.json({
+        return sendJsonResponse(res, 200, {
           type: 'song',
           resolvedUrl,
           track,
@@ -871,7 +911,7 @@ export async function handleResolveReq(req: any, res: any) {
       } catch {
         try {
           const playlist = await fetchPlaylistData(targetId, shareCode);
-          return res.json({
+          return sendJsonResponse(res, 200, {
             type: 'playlist',
             resolvedUrl,
             playlist,
@@ -882,10 +922,10 @@ export async function handleResolveReq(req: any, res: any) {
       }
     }
 
-    return res.status(404).json({ error: 'Could not recognize Suno song or playlist from this URL' });
+    return sendJsonResponse(res, 404, { error: 'Could not recognize Suno song or playlist from this URL' });
   } catch (err: any) {
     console.error('Resolve error:', err);
-    return res.status(404).json({ error: err.message || 'Failed to resolve Suno link' });
+    return sendJsonResponse(res, 404, { error: err.message || 'Failed to resolve Suno link' });
   }
 }
 

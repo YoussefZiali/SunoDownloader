@@ -209,6 +209,12 @@ export default function App() {
         });
         if (res.ok) {
           data = await res.json();
+        } else {
+          // Retry via GET request if POST endpoint returns error
+          const getRes = await fetch(`/api/suno/resolve?url=${encodeURIComponent(trimmed)}`);
+          if (getRes.ok) {
+            data = await getRes.json();
+          }
         }
       } catch {
         data = null;
