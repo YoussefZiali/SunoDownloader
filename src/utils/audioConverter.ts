@@ -133,13 +133,27 @@ export async function fetchAudioData(url: string, onProgress?: (p: number) => vo
     return merged.buffer;
   };
 
-  try {
-    return await tryFetch(url);
-  } catch (err) {
-    // Retry via backend proxy
-    const proxyUrl = `/api/suno/proxy-audio?url=${encodeURIComponent(url)}`;
-    return await tryFetch(proxyUrl);
+  const proxyCandidates = [
+    url,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    `/api/suno/proxy-audio?url=${encodeURIComponent(url)}`,
+  ];
+
+  let lastError: any = null;
+  for (const candidateUrl of proxyCandidates) {
+    try {
+      const buf = await tryFetch(candidateUrl);
+      if (buf && buf.byteLength > 5000) {
+        return buf;
+      }
+    } catch (e: any) {
+      lastError = e;
+    }
   }
+
+  throw new Error(`Failed to fetch audio stream: ${lastError?.message || 'Network blocked'}`);
 }
 
 // Helper to format short duration for filenames

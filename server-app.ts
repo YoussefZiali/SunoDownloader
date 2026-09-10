@@ -192,7 +192,7 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
   }
 
   // Fallback: Direct CDN stream if accessible (unencrypted mp4 / cdn streams)
-  const candidateUrls = [
+  const directCandidateUrls = [
     ...(audioUrl && audioUrl.startsWith('http') ? [audioUrl] : []),
     `https://cdn1.suno.ai/${trackId}.mp3`,
     `https://cdn1.suno.ai/${trackId}.mp4`,
@@ -203,11 +203,19 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
     `https://audiopipe.suno.ai/?item_id=${trackId}`,
   ];
 
+  const candidateUrls: string[] = [];
+  for (const u of directCandidateUrls) {
+    candidateUrls.push(u);
+    candidateUrls.push(`https://corsproxy.io/?${encodeURIComponent(u)}`);
+    candidateUrls.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`);
+  }
+
   for (const cdnUrl of candidateUrls) {
     try {
       const directRes = await fetch(cdnUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Referer': 'https://suno.com/',
         },
       });
       if (directRes.ok) {
@@ -588,35 +596,34 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
 async function fetchTrackData(trackId: string): Promise<any> {
   let clipData: any = null;
 
-  // 1. Try studio-api.prod.suno.com/api/clip/:id
-  try {
-    const apiRes = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-      },
-    });
-    if (apiRes.ok) {
-      clipData = await apiRes.json();
-    }
-  } catch {
-    // continue
-  }
+  // 1. Try studio-api endpoints directly and via CORS proxy
+  const apiUrls = [
+    `https://studio-api.prod.suno.com/api/clip/${trackId}`,
+    `https://studio-api.suno.ai/api/clip/${trackId}`,
+    `https://corsproxy.io/?${encodeURIComponent(`https://studio-api.prod.suno.com/api/clip/${trackId}`)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://studio-api.prod.suno.com/api/clip/${trackId}`)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://studio-api.prod.suno.com/api/clip/${trackId}`)}`,
+  ];
 
-  // 1b. Try studio-api.suno.ai/api/clip/:id
-  if (!clipData) {
+  for (const apiUrl of apiUrls) {
     try {
-      const apiRes = await fetch(`https://studio-api.suno.ai/api/clip/${trackId}`, {
+      const apiRes = await fetch(apiUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Accept': 'application/json',
+          'Referer': 'https://suno.com/',
+          'Origin': 'https://suno.com',
         },
       });
       if (apiRes.ok) {
-        clipData = await apiRes.json();
+        const resData = await apiRes.json();
+        if (resData && (resData.id || resData.title)) {
+          clipData = resData;
+          break;
+        }
       }
     } catch {
-      // continue
+      // continue to next endpoint
     }
   }
 
@@ -1115,12 +1122,21 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
     }
   }
 
-  const candidates: string[] = [audioUrl];
+  const directCandidates: string[] = [audioUrl];
   if (trackUuid) {
     const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackUuid}.m4a`;
     const mp4Url = `https://cdn1.suno.ai/${trackUuid}.mp4`;
-    if (!candidates.includes(m4aUrl)) candidates.push(m4aUrl);
-    if (!candidates.includes(mp4Url)) candidates.push(mp4Url);
+    const mp3Url = `https://cdn1.suno.ai/${trackUuid}.mp3`;
+    if (!directCandidates.includes(m4aUrl)) directCandidates.push(m4aUrl);
+    if (!directCandidates.includes(mp4Url)) directCandidates.push(mp4Url);
+    if (!directCandidates.includes(mp3Url)) directCandidates.push(mp3Url);
+  }
+
+  const candidates: string[] = [];
+  for (const c of directCandidates) {
+    candidates.push(c);
+    candidates.push(`https://corsproxy.io/?${encodeURIComponent(c)}`);
+    candidates.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(c)}`);
   }
 
   const reqHeaders: Record<string, string> = {

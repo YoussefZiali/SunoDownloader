@@ -218,12 +218,19 @@ export default function App() {
         setCurrentPlaylist(data.playlist);
         setCurrentTrack(null);
       } else if (data && data.type === 'song' && data.track) {
-        setCurrentTrack(data.track);
+        let trackToUse = data.track;
+        if (trackToUse.title.startsWith('Suno Track ') || trackToUse.artist === 'Suno Artist') {
+          const enrichedTrack = await resolveTrackClientSide(trimmed);
+          if (enrichedTrack && !enrichedTrack.title.startsWith('Suno Track ')) {
+            trackToUse = enrichedTrack;
+          }
+        }
+        setCurrentTrack(trackToUse);
         setCurrentPlaylist(null);
         setCustomMetadata({});
-        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, data.track.duration || 180) });
+        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, trackToUse.duration || 180) });
         if (settings.autoDownloadOnPaste) {
-          setTimeout(() => handleDownloadTrack(data.track, settings.defaultFormat), 500);
+          setTimeout(() => handleDownloadTrack(trackToUse, settings.defaultFormat), 500);
         }
       } else {
         // Fallback: Client-side URL & Track resolution in browser
@@ -252,34 +259,47 @@ export default function App() {
     if (!uuidMatch) return null;
     const trackId = uuidMatch[0];
 
-    try {
-      const res = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`);
-      if (res.ok) {
-        const clip = await res.json();
-        if (clip && clip.id) {
-          const duration = Math.round(clip.metadata?.duration || clip.duration || 180);
-          return {
-            id: clip.id,
-            title: clip.title || `Suno Track ${clip.id.slice(0, 8)}`,
-            artist: clip.display_name || clip.handle || 'Suno Artist',
-            handle: clip.handle ? `@${clip.handle}` : '@suno_user',
-            audio_url: (clip.audio_url && clip.audio_url.startsWith('http')) ? clip.audio_url : `https://cdn1.suno.ai/${clip.id}.mp3`,
-            video_url: clip.video_url || `https://cdn1.suno.ai/${clip.id}.mp4`,
-            image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${clip.id}.jpeg`,
-            duration,
-            duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
-            play_count: clip.play_count || 120,
-            upvote_count: clip.upvote_count || 12,
-            tags: clip.metadata?.tags || clip.display_tags || 'suno',
-            model: clip.major_model_version || 'v6',
-            created_at: clip.created_at || new Date().toISOString(),
-            isVerified: clip.is_verified || false,
-            iframe_url: `https://suno.com/embed/${clip.id}`,
-          };
+    const targetApi = `https://studio-api.prod.suno.com/api/clip/${trackId}`;
+    const proxyEndpoints = [
+      `https://corsproxy.io/?${encodeURIComponent(targetApi)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetApi)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetApi)}`,
+      targetApi,
+    ];
+
+    let clip: any = null;
+    for (const ep of proxyEndpoints) {
+      try {
+        const res = await fetch(ep);
+        if (res.ok) {
+          clip = await res.json();
+          if (clip && clip.id) break;
         }
+      } catch {
+        // try next endpoint
       }
-    } catch {
-      // continue to fallback
+    }
+
+    if (clip && clip.id) {
+      const duration = Math.round(clip.metadata?.duration || clip.duration || 180);
+      return {
+        id: clip.id,
+        title: clip.title || `Suno Track ${clip.id.slice(0, 8)}`,
+        artist: clip.display_name || clip.handle || 'Suno Artist',
+        handle: clip.handle ? `@${clip.handle}` : '@suno_user',
+        audio_url: (clip.audio_url && clip.audio_url.startsWith('http')) ? clip.audio_url : `https://cdn1.suno.ai/${clip.id}.mp3`,
+        video_url: clip.video_url || `https://cdn1.suno.ai/${clip.id}.mp4`,
+        image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${clip.id}.jpeg`,
+        duration,
+        duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
+        play_count: clip.play_count || 120,
+        upvote_count: clip.upvote_count || 12,
+        tags: clip.metadata?.tags || clip.display_tags || 'suno',
+        model: clip.major_model_version || 'v6',
+        created_at: clip.created_at || new Date().toISOString(),
+        isVerified: clip.is_verified || false,
+        iframe_url: `https://suno.com/embed/${clip.id}`,
+      };
     }
 
     return {
