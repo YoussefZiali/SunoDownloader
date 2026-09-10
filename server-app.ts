@@ -4,6 +4,9 @@ import fs from 'fs';
 import { Readable } from 'stream';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
+import ffmpegStatic from 'ffmpeg-static';
+
+const FFMPEG_BIN = (typeof ffmpegStatic === 'string' ? ffmpegStatic : (ffmpegStatic as any)?.default) || 'ffmpeg';
 
 const app = express();
 
@@ -40,7 +43,7 @@ let hasFfmpegCache: boolean | null = null;
 async function isFfmpegAvailable(): Promise<boolean> {
   if (hasFfmpegCache !== null) return hasFfmpegCache;
   return new Promise((resolve) => {
-    execFile('ffmpeg', ['-version'], (err) => {
+    execFile(FFMPEG_BIN, ['-version'], (err) => {
       hasFfmpegCache = !err;
       resolve(hasFfmpegCache);
     });
@@ -412,13 +415,13 @@ async function transcodeTrack(
         outPath,
       ];
 
-      execFile('ffmpeg', args, (err) => {
+      execFile(FFMPEG_BIN, args, (err) => {
         activeTranscodes.delete(cacheKey);
         if (err) {
           console.warn(`ffmpeg transcode warning for ${trackId} (${format}):`, err.message);
           // If mp3 with cover failed, retry without cover
           if (format === 'mp3' && coverImagePath) {
-            execFile('ffmpeg', ['-y', '-i', inputPath, '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3', ...metaArgs, outPath], (fallbackErr) => {
+            execFile(FFMPEG_BIN, ['-y', '-i', inputPath, '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3', ...metaArgs, outPath], (fallbackErr) => {
               if (fallbackErr) {
                 // If ffmpeg still fails, resolve to raw decrypted audio
                 resolve(inputPath);
@@ -1089,21 +1092,7 @@ export async function handleDownloadReq(req: any, res: any) {
   const genre = (req.query?.genre as string) || undefined;
   const normalize = req.query?.normalize === 'true';
 
-  const isSimpleMp3Download = format === 'mp3' &&
-    (startTime == null || isNaN(startTime)) &&
-    (endTime == null || isNaN(endTime)) &&
-    !album && !year && !genre && !normalize;
 
-  if (isSimpleMp3Download) {
-    const filename = `${sanitize(artist)} - ${sanitize(title)}.mp3`;
-    req.query = {
-      ...req.query,
-      url: audioUrl || `https://cdn1.suno.ai/${trackId}.mp3`,
-      download: 'true',
-      filename,
-    };
-    return handleProxyAudioReq(req, res);
-  }
 
   try {
     const result = await transcodeTrack(trackId, format, bitrate, bitDepth, title, artist, coverUrl, {
