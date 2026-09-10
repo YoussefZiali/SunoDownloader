@@ -50,24 +50,31 @@ async function isFfmpegAvailable(): Promise<boolean> {
 // In-flight transcode promises to avoid duplicate transcode processes
 const activeTranscodes = new Map<string, Promise<string>>();
 
-// Fetches rights and decrypts Suno's AES-CTR encrypted audio stream into a valid local audio file
+// Fetches audio from Suno's CDN or fallback endpoints into a local cache file
 async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promise<string> {
   const decryptedPath = path.join(CACHE_DIR, `${trackId}_decrypted.m4a`);
   if (fs.existsSync(decryptedPath) && fs.statSync(decryptedPath).size > 5000) {
     return decryptedPath;
   }
 
-  // 0. If direct audioUrl is provided, attempt to fetch it first
-  if (audioUrl && audioUrl.startsWith('http')) {
+  const fastCandidates: string[] = [];
+  if (audioUrl && audioUrl.startsWith('http')) fastCandidates.push(audioUrl);
+  fastCandidates.push(`https://cdn1.suno.ai/${trackId}.mp3`);
+  fastCandidates.push(`https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackId}.m4a`);
+  fastCandidates.push(`https://cdn1.suno.ai/${trackId}.mp4`);
+
+  for (const url of fastCandidates) {
     try {
-      const res = await fetch(audioUrl, {
+      const res = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Referer': 'https://suno.com/',
           'Origin': 'https://suno.com',
         },
+        signal: AbortSignal.timeout(3500),
       });
-      if (res.ok) {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (res.ok && !ct.includes('text/html') && !ct.includes('application/json')) {
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length > 5000) {
           fs.writeFileSync(decryptedPath, buf);
@@ -75,11 +82,11 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         }
       }
     } catch {
-      // continue to next method
+      // continue
     }
   }
 
-  // 0b. Attempt to fetch clip metadata directly from Suno's official studio API
+  // Attempt Studio API metadata
   try {
     const apiRes = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`, {
       headers: {
@@ -88,6 +95,7 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         'Referer': 'https://suno.com/',
         'Origin': 'https://suno.com',
       },
+      signal: AbortSignal.timeout(3500),
     });
     if (apiRes.ok) {
       const clipJson = await apiRes.json();
@@ -98,8 +106,10 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
             'Referer': 'https://suno.com/',
             'Origin': 'https://suno.com',
           },
+          signal: AbortSignal.timeout(3500),
         });
-        if (audioRes.ok) {
+        const ct = (audioRes.headers.get('content-type') || '').toLowerCase();
+        if (audioRes.ok && !ct.includes('text/html')) {
           const buf = Buffer.from(await audioRes.arrayBuffer());
           if (buf.length > 5000) {
             fs.writeFileSync(decryptedPath, buf);
@@ -108,16 +118,13 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         }
       }
     }
-  } catch (e: any) {
-    console.warn(`Studio API direct audio fetch failed for ${trackId}:`, e.message);
+  } catch {
+    // continue
   }
 
-  // 1. Fetch decryption rights from the Suno rights service
+  // Legacy rights decryption fallback with 3s timeout
   let rights: any = null;
-  const rightsEndpoints = [
-    'https://yellow-salad.aibiei.com/rights',
-  ];
-
+  const rightsEndpoints = ['https://yellow-salad.aibiei.com/rights'];
   for (const ep of rightsEndpoints) {
     try {
       const rightsRes = await fetch(ep, {
@@ -132,6 +139,7 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         body: JSON.stringify({
           content_params: { content_id: trackId, content_type: 'clip' },
         }),
+        signal: AbortSignal.timeout(3000),
       });
 
       if (rightsRes.ok) {
@@ -140,8 +148,8 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
           break;
         }
       }
-    } catch (e: any) {
-      console.warn(`Rights fetch from ${ep} failed for ${trackId}:`, e.message);
+    } catch {
+      // continue
     }
   }
 
@@ -1081,6 +1089,22 @@ export async function handleDownloadReq(req: any, res: any) {
   const genre = (req.query?.genre as string) || undefined;
   const normalize = req.query?.normalize === 'true';
 
+  const isSimpleMp3Download = format === 'mp3' &&
+    (startTime == null || isNaN(startTime)) &&
+    (endTime == null || isNaN(endTime)) &&
+    !album && !year && !genre && !normalize;
+
+  if (isSimpleMp3Download) {
+    const filename = `${sanitize(artist)} - ${sanitize(title)}.mp3`;
+    req.query = {
+      ...req.query,
+      url: audioUrl || `https://cdn1.suno.ai/${trackId}.mp3`,
+      download: 'true',
+      filename,
+    };
+    return handleProxyAudioReq(req, res);
+  }
+
   try {
     const result = await transcodeTrack(trackId, format, bitrate, bitDepth, title, artist, coverUrl, {
       startTime,
@@ -1161,9 +1185,10 @@ export async function handleProxyAudioReq(req: any, res: any) {
     try {
       const resp = await fetch(url, {
         headers: reqHeaders,
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(3500),
       });
-      if (resp.ok || resp.status === 206) {
+      const ct = (resp.headers.get('content-type') || '').toLowerCase();
+      if ((resp.ok || resp.status === 206) && !ct.includes('text/html') && !ct.includes('application/json')) {
         upstreamRes = resp;
         successfulUrl = url;
         break;
@@ -1173,73 +1198,78 @@ export async function handleProxyAudioReq(req: any, res: any) {
     }
   }
 
-  if (!upstreamRes && trackUuid) {
-    const proxyCandidates = [
-      `https://corsproxy.io/?${encodeURIComponent(`https://cdn1.suno.ai/${trackUuid}.mp3`)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://cdn1.suno.ai/${trackUuid}.mp3`)}`,
-    ];
-    for (const url of proxyCandidates) {
-      try {
-        const resp = await fetch(url, {
-          signal: AbortSignal.timeout(4000),
-        });
-        if (resp.ok || resp.status === 206) {
-          upstreamRes = resp;
-          successfulUrl = url;
-          break;
+  if (upstreamRes && upstreamRes.body) {
+    try {
+      const isPartial = upstreamRes.status === 206;
+      res.status(isPartial ? 206 : 200);
+
+      let contentType = upstreamRes.headers.get('content-type') || '';
+      if (!contentType || contentType === 'application/octet-stream') {
+        if (successfulUrl.endsWith('.m4a') || successfulUrl.includes('.m4a')) {
+          contentType = 'audio/mp4';
+        } else if (successfulUrl.endsWith('.mp4') || successfulUrl.includes('.mp4')) {
+          contentType = 'video/mp4';
+        } else {
+          contentType = 'audio/mpeg';
         }
-      } catch {
-        // continue
       }
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const contentRange = upstreamRes.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+
+      const contentLength = upstreamRes.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      if (req.query?.download === 'true') {
+        const filename = (req.query.filename as string) || 'suno-song.mp3';
+        res.setHeader('Content-Disposition', makeContentDisposition(filename));
+      }
+
+      const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+      return nodeStream.pipe(res);
+    } catch {
+      // fallback
     }
   }
 
-  if (!upstreamRes || !upstreamRes.body) {
-    return res.status(404).json({ error: 'Audio stream could not be reached' });
-  }
+  if (trackUuid) {
+    try {
+      const localFile = await getDecryptedAudioPath(trackUuid, audioUrl);
+      const stat = fs.statSync(localFile);
+      const range = req.headers.range;
 
-  try {
-    const isPartial = upstreamRes.status === 206;
-    res.status(isPartial ? 206 : 200);
+      if (req.query?.download === 'true') {
+        const filename = (req.query.filename as string) || 'suno-song.mp3';
+        res.setHeader('Content-Disposition', makeContentDisposition(filename));
+      }
 
-    let contentType = upstreamRes.headers.get('content-type') || '';
-    if (!contentType || contentType === 'application/octet-stream' || contentType.includes('text/')) {
-      if (successfulUrl.endsWith('.m4a') || successfulUrl.includes('.m4a')) {
-        contentType = 'audio/mp4';
-      } else if (successfulUrl.endsWith('.mp4') || successfulUrl.includes('.mp4')) {
-        contentType = 'video/mp4';
-      } else if (successfulUrl.endsWith('.mp3') || successfulUrl.includes('.mp3')) {
-        contentType = 'audio/mpeg';
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        const chunksize = (end - start) + 1;
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+        res.setHeader('Content-Length', chunksize);
+        const stream = fs.createReadStream(localFile, { start, end });
+        return stream.pipe(res);
       } else {
-        contentType = 'audio/mpeg';
+        res.setHeader('Content-Length', stat.size);
+        const stream = fs.createReadStream(localFile);
+        return stream.pipe(res);
       }
-    }
-
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Accept-Ranges', 'bytes');
-
-    const contentRange = upstreamRes.headers.get('content-range');
-    if (contentRange) {
-      res.setHeader('Content-Range', contentRange);
-    }
-
-    const contentLength = upstreamRes.headers.get('content-length');
-    if (contentLength) {
-      res.setHeader('Content-Length', contentLength);
-    }
-
-    if (req.query?.download === 'true') {
-      const filename = (req.query.filename as string) || 'suno-song.mp3';
-      res.setHeader('Content-Disposition', makeContentDisposition(filename));
-    }
-
-    const nodeStream = Readable.fromWeb(upstreamRes.body as any);
-    nodeStream.pipe(res);
-  } catch (error: any) {
-    if (!res.headersSent) {
-      return res.status(500).json({ error: error.message || 'Proxy error' });
+    } catch (e: any) {
+      console.warn(`proxy-audio fallback failed for ${trackUuid}:`, e.message);
     }
   }
+
+  return res.status(404).json({ error: 'Audio stream unavailable' });
 }
 
 export async function handleProxyImageReq(req: any, res: any) {
