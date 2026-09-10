@@ -198,40 +198,6 @@ export async function convertTrackToFormat(
 
   onProgress?.(15);
 
-  const bitrate = settings.mp3Bitrate || '320kbps';
-  const bitDepth = settings.wavBitDepth || '24-bit';
-  
-  const queryParams = new URLSearchParams({
-    id: track.id,
-    format: format === 'aac' ? 'm4a' : format,
-    bitrate: bitrate,
-    bitDepth: bitDepth,
-    title: effectiveTrack.title,
-    artist: effectiveTrack.artist,
-    cover: track.image_url || '',
-  });
-
-  if (options?.startTime != null && !isNaN(options.startTime)) {
-    queryParams.set('startTime', String(options.startTime));
-  }
-  if (options?.endTime != null && !isNaN(options.endTime)) {
-    queryParams.set('endTime', String(options.endTime));
-  }
-  if (options?.customMetadata?.album) {
-    queryParams.set('album', options.customMetadata.album);
-  }
-  if (options?.customMetadata?.year) {
-    queryParams.set('year', options.customMetadata.year);
-  }
-  if (options?.customMetadata?.genre) {
-    queryParams.set('genre', options.customMetadata.genre);
-  }
-  if (options?.normalize || settings.volumeNormalization) {
-    queryParams.set('normalize', 'true');
-  }
-
-  const downloadUrl = `/api/suno/download?${queryParams.toString()}`;
-
   onProgress?.(30);
 
   const mimeMap: Record<string, string> = {
@@ -242,25 +208,6 @@ export async function convertTrackToFormat(
     ogg: 'audio/ogg',
   };
 
-  let res: Response | null = null;
-  try {
-    res = await fetch(downloadUrl);
-  } catch {
-    res = null;
-  }
-
-  if (res && res.ok) {
-    onProgress?.(70);
-    const rawBlob = await res.blob();
-    const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
-    onProgress?.(100);
-    return {
-      blob,
-      fileName,
-    };
-  }
-
-  // Direct Browser CDN Fetch Fallback if backend server endpoint is unreachable or 500
   const directAudioUrl = (track.audio_url && track.audio_url.startsWith('http'))
     ? track.audio_url
     : `https://cdn1.suno.ai/${track.id}.mp3`;
@@ -274,15 +221,8 @@ export async function convertTrackToFormat(
       blob,
       fileName,
     };
-  } catch (fallbackErr: any) {
-    let message = `Audio processing error: ${res ? `HTTP ${res.status}` : fallbackErr.message || 'Direct download failed'}`;
-    if (res) {
-      try {
-        const errJson = await res.json();
-        if (errJson?.error) message = errJson.error;
-      } catch {}
-    }
-    throw new Error(message);
+  } catch (err: any) {
+    throw new Error(`Download failed: ${err.message || 'Direct audio download unavailable'}`);
   }
 
   onProgress?.(70);
