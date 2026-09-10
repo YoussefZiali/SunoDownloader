@@ -329,7 +329,7 @@ async function transcodeTrack(
     ? `_m${Buffer.from((options.album || '') + (options.year || '') + (options.genre || '')).toString('hex').slice(0, 8)}` 
     : '';
 
-  const cacheKey = `${trackId}_${format}_${format === 'mp3' ? `${safeBitrate}_cov` : (format === 'wav' ? bitDepth : 'std')}${trimKey}${normKey}${metaKey}.${ext}`;
+  const cacheKey = `${trackId}_${format}_v3_${format === 'mp3' ? `${safeBitrate}` : (format === 'wav' ? bitDepth : 'std')}${trimKey}${normKey}${metaKey}.${ext}`;
   const outPath = path.join(CACHE_DIR, cacheKey);
 
   const mimeMap: Record<string, string> = {
@@ -350,11 +350,6 @@ async function transcodeTrack(
   }
 
   const promise = (async () => {
-    let coverImagePath: string | null = null;
-    if (format === 'mp3') {
-      coverImagePath = await getCoverImagePath(trackId, coverUrl);
-    }
-
     return new Promise<string>((resolve, reject) => {
       const inputArgs = ['-y'];
 
@@ -375,20 +370,7 @@ async function transcodeTrack(
       }
 
       if (format === 'mp3') {
-        if (coverImagePath) {
-          inputArgs.push('-i', coverImagePath);
-          audioArgs = [
-            '-map', '0:a:0',
-            '-map', '1:0',
-            '-c:a', 'libmp3lame',
-            '-b:a', safeBitrate || '320k',
-            '-c:v', 'mjpeg',
-            '-disposition:v', 'attached_pic',
-            '-id3v2_version', '3',
-          ];
-        } else {
-          audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3'];
-        }
+        audioArgs = ['-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3'];
       } else if (format === 'wav') {
         audioArgs = ['-map', '0:a:0', '-vn', '-c:a', bitDepth === '16-bit' ? 'pcm_s16le' : 'pcm_s24le'];
       } else if (format === 'flac') {
