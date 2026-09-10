@@ -195,7 +195,6 @@ export async function convertTrackToFormat(
     title: effectiveTrack.title,
     artist: effectiveTrack.artist,
     cover: track.image_url || '',
-    audioUrl: track.audio_url || '',
   });
 
   if (options?.startTime != null && !isNaN(options.startTime)) {
@@ -219,6 +218,39 @@ export async function convertTrackToFormat(
 
   const downloadUrl = `/api/suno/download?${queryParams.toString()}`;
 
+  onProgress?.(30);
+
+  let res = await fetch(downloadUrl);
+  if (!res.ok) {
+    // Resilient fallback to audio stream or proxy audio
+    const streamFallback = `/api/suno/stream/${track.id}.mp3`;
+    try {
+      const fallbackRes = await fetch(streamFallback);
+      if (fallbackRes.ok) {
+        res = fallbackRes;
+      } else {
+        const proxyFallback = `/api/suno/proxy-audio?url=${encodeURIComponent(`https://cdn1.suno.ai/${track.id}.mp4`)}`;
+        const proxyRes = await fetch(proxyFallback);
+        if (proxyRes.ok) {
+          res = proxyRes;
+        }
+      }
+    } catch {
+      // ignore fallback error and report original
+    }
+  }
+
+  if (!res.ok) {
+    let message = `Audio processing error: HTTP ${res.status}`;
+    try {
+      const errJson = await res.json();
+      if (errJson?.error) message = errJson.error;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
   const mimeMap: Record<string, string> = {
     mp3: 'audio/mpeg',
     wav: 'audio/wav',
@@ -227,49 +259,15 @@ export async function convertTrackToFormat(
     ogg: 'audio/ogg',
   };
 
-  let res: Response | null = null;
-  try {
-    res = await fetch(downloadUrl);
-  } catch (e) {
-    res = null;
-  }
+  onProgress?.(70);
+  const rawBlob = await res.blob();
+  const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
+  onProgress?.(100);
 
-  if (res && res.ok) {
-    onProgress?.(70);
-    const rawBlob = await res.blob();
-    const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
-    onProgress?.(100);
-    return {
-      blob,
-      fileName,
-    };
-  }
-
-  // Fallback to client-side direct fetch if backend endpoint returns non-OK or connection error
-  const fallbackUrl = (track.audio_url && track.audio_url.startsWith('http'))
-    ? track.audio_url
-    : `https://cdn1.suno.ai/${track.id}.mp3`;
-  try {
-    onProgress?.(50);
-    const buffer = await fetchAudioData(fallbackUrl, onProgress);
-    const blob = new Blob([buffer], { type: mimeMap[format] || 'audio/mpeg' });
-    onProgress?.(100);
-    return {
-      blob,
-      fileName,
-    };
-  } catch (fallbackErr: any) {
-    let message = `Audio processing error: ${res ? `HTTP ${res.status}` : fallbackErr.message || 'Download failed'}`;
-    if (res) {
-      try {
-        const errJson = await res.json();
-        if (errJson?.error) message = errJson.error;
-      } catch {
-        // ignore
-      }
-    }
-    throw new Error(message);
-  }
+  return {
+    blob,
+    fileName,
+  };
 }
 
 // Direct browser streaming download for single files - skips JS memory buffering
