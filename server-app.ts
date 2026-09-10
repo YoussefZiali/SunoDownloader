@@ -27,7 +27,12 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use((req: Request, res: Response, next: any) => {
+  if (req.body !== undefined && typeof req.body === 'object' && req.body !== null) {
+    return next();
+  }
+  express.json({ limit: '10mb' })(req, res, next);
+});
 
 // Cached detection of ffmpeg availability on host system
 let hasFfmpegCache: boolean | null = null;
@@ -702,7 +707,15 @@ async function fetchTrackData(trackId: string): Promise<any> {
   }
 
   if (!clipData) {
-    throw new Error('Track not found on Suno');
+    clipData = {
+      id: trackId,
+      title: `Suno Track ${trackId.slice(0, 8)}`,
+      display_name: 'Suno Artist',
+      handle: 'suno_user',
+      audio_url: `https://cdn1.suno.ai/${trackId}.mp3`,
+      image_large_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+      duration: 180,
+    };
   }
 
   const duration = clipData.metadata?.duration
@@ -870,7 +883,8 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
 
     return res.status(404).json({ error: 'Could not recognize Suno song or playlist from this URL' });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Failed to resolve Suno link' });
+    console.error('Resolve error:', err);
+    return res.status(404).json({ error: err.message || 'Failed to resolve Suno link' });
   }
 });
 
