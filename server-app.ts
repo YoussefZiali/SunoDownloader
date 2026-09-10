@@ -62,6 +62,8 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
       const res = await fetch(audioUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Referer': 'https://suno.com/',
+          'Origin': 'https://suno.com',
         },
       });
       if (res.ok) {
@@ -82,6 +84,8 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'application/json',
+        'Referer': 'https://suno.com/',
+        'Origin': 'https://suno.com',
       },
     });
     if (apiRes.ok) {
@@ -90,6 +94,8 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         const audioRes = await fetch(clipJson.audio_url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': 'https://suno.com/',
+            'Origin': 'https://suno.com',
           },
         });
         if (audioRes.ok) {

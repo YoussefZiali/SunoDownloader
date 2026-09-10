@@ -199,7 +199,39 @@ export default function App() {
         return;
       }
 
-      // 1. Try playlist resolution client-side
+      // 1. Try backend API resolution first
+      let data: any = null;
+      try {
+        const res = await fetch('/api/suno/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: trimmed }),
+        });
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch {
+        data = null;
+      }
+
+      if (data && data.type === 'playlist' && data.playlist?.tracks?.length > 0) {
+        setCurrentPlaylist(data.playlist);
+        setCurrentTrack(null);
+        setIsLoadingUrl(false);
+        return;
+      } else if (data && data.type === 'song' && data.track) {
+        setCurrentTrack(data.track);
+        setCurrentPlaylist(null);
+        setCustomMetadata({});
+        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, data.track.duration || 180) });
+        if (settings.autoDownloadOnPaste) {
+          setTimeout(() => handleDownloadTrack(data.track, settings.defaultFormat), 500);
+        }
+        setIsLoadingUrl(false);
+        return;
+      }
+
+      // 2. Client-side fallback if backend API is offline or serverless error
       const clientPlaylist = await resolvePlaylistClientSide(trimmed);
       if (clientPlaylist && clientPlaylist.tracks.length > 0) {
         setCurrentPlaylist(clientPlaylist);
@@ -208,7 +240,6 @@ export default function App() {
         return;
       }
 
-      // 2. Try single track resolution client-side
       const clientTrack = await resolveTrackClientSide(trimmed);
       if (clientTrack) {
         setCurrentTrack(clientTrack);
