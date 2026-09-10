@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 
@@ -620,6 +621,7 @@ async function fetchTrackData(trackId: string): Promise<any> {
           'Referer': 'https://suno.com/',
           'Origin': 'https://suno.com',
         },
+        signal: AbortSignal.timeout(3500),
       });
       if (apiRes.ok) {
         const resData = await apiRes.json();
@@ -1048,27 +1050,8 @@ export async function handleStreamReq(req: any, res: any) {
   const uuidMatch = rawId.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
   const trackId = uuidMatch ? uuidMatch[0] : rawId.replace(/\.(mp3|m4a|wav|mp4)$/i, '').trim();
 
-  try {
-    const result = await transcodeTrack(trackId, 'mp3', '320k');
-    const fileBuffer = fs.readFileSync(result.filePath);
-    res.setHeader('Content-Type', result.mimeType);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Content-Length', fileBuffer.length);
-    return res.send(fileBuffer);
-  } catch (err: any) {
-    console.warn(`Stream transcode fallback for ${trackId}:`, err.message);
-    try {
-      const rawPath = await getDecryptedAudioPath(trackId);
-      const fileBuffer = fs.readFileSync(rawPath);
-      res.setHeader('Content-Type', 'audio/mp4');
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Content-Length', fileBuffer.length);
-      return res.send(fileBuffer);
-    } catch (fallbackErr: any) {
-      console.error(`Stream delivery failure for ${trackId}:`, fallbackErr.message);
-      return res.status(500).json({ error: `Audio stream unavailable: ${err.message}` });
-    }
-  }
+  req.query = { ...req.query, url: `https://cdn1.suno.ai/${trackId}.mp3` };
+  return handleProxyAudioReq(req, res);
 }
 
 export async function handleDownloadReq(req: any, res: any) {
@@ -1150,40 +1133,21 @@ export async function handleProxyAudioReq(req: any, res: any) {
   const uuidMatch = audioUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
   const trackUuid = uuidMatch ? uuidMatch[0] : null;
 
+  const candidates: string[] = [audioUrl];
   if (trackUuid) {
-    try {
-      const localFile = await getDecryptedAudioPath(trackUuid, audioUrl);
-      const fileBuffer = fs.readFileSync(localFile);
-      res.setHeader('Content-Type', 'audio/mp4');
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Content-Length', fileBuffer.length);
-      return res.send(fileBuffer);
-    } catch (e: any) {
-      console.warn(`proxy-audio decrypt fallback for ${trackUuid}:`, e.message);
-    }
-  }
-
-  const directCandidates: string[] = [audioUrl];
-  if (trackUuid) {
+    const mp3Url = `https://cdn1.suno.ai/${trackUuid}.mp3`;
     const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackUuid}.m4a`;
     const mp4Url = `https://cdn1.suno.ai/${trackUuid}.mp4`;
-    const mp3Url = `https://cdn1.suno.ai/${trackUuid}.mp3`;
-    if (!directCandidates.includes(m4aUrl)) directCandidates.push(m4aUrl);
-    if (!directCandidates.includes(mp4Url)) directCandidates.push(mp4Url);
-    if (!directCandidates.includes(mp3Url)) directCandidates.push(mp3Url);
-  }
-
-  const candidates: string[] = [];
-  for (const c of directCandidates) {
-    candidates.push(c);
-    candidates.push(`https://corsproxy.io/?${encodeURIComponent(c)}`);
-    candidates.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(c)}`);
+    if (!candidates.includes(mp3Url)) candidates.push(mp3Url);
+    if (!candidates.includes(m4aUrl)) candidates.push(m4aUrl);
+    if (!candidates.includes(mp4Url)) candidates.push(mp4Url);
   }
 
   const reqHeaders: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Referer': 'https://suno.com/',
+    'Origin': 'https://suno.com',
   };
 
   if (req.headers?.range) {
@@ -1195,7 +1159,10 @@ export async function handleProxyAudioReq(req: any, res: any) {
 
   for (const url of candidates) {
     try {
-      const resp = await fetch(url, { headers: reqHeaders });
+      const resp = await fetch(url, {
+        headers: reqHeaders,
+        signal: AbortSignal.timeout(4000),
+      });
       if (resp.ok || resp.status === 206) {
         upstreamRes = resp;
         successfulUrl = url;
@@ -1206,7 +1173,28 @@ export async function handleProxyAudioReq(req: any, res: any) {
     }
   }
 
-  if (!upstreamRes) {
+  if (!upstreamRes && trackUuid) {
+    const proxyCandidates = [
+      `https://corsproxy.io/?${encodeURIComponent(`https://cdn1.suno.ai/${trackUuid}.mp3`)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://cdn1.suno.ai/${trackUuid}.mp3`)}`,
+    ];
+    for (const url of proxyCandidates) {
+      try {
+        const resp = await fetch(url, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (resp.ok || resp.status === 206) {
+          upstreamRes = resp;
+          successfulUrl = url;
+          break;
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  if (!upstreamRes || !upstreamRes.body) {
     return res.status(404).json({ error: 'Audio stream could not be reached' });
   }
 
@@ -1223,7 +1211,7 @@ export async function handleProxyAudioReq(req: any, res: any) {
       } else if (successfulUrl.endsWith('.mp3') || successfulUrl.includes('.mp3')) {
         contentType = 'audio/mpeg';
       } else {
-        contentType = 'audio/mp4';
+        contentType = 'audio/mpeg';
       }
     }
 
@@ -1245,10 +1233,12 @@ export async function handleProxyAudioReq(req: any, res: any) {
       res.setHeader('Content-Disposition', makeContentDisposition(filename));
     }
 
-    const arrayBuffer = await upstreamRes.arrayBuffer();
-    return res.send(Buffer.from(arrayBuffer));
+    const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+    nodeStream.pipe(res);
   } catch (error: any) {
-    return res.status(500).json({ error: error.message || 'Proxy error' });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message || 'Proxy error' });
+    }
   }
 }
 
