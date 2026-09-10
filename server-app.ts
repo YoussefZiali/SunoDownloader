@@ -795,7 +795,15 @@ app.get('/api/health', async (req: Request, res: Response) => {
 // Master API to resolve ANY Suno link (including short links https://suno.com/s/...)
 app.all('/api/suno/resolve', async (req: Request, res: Response) => {
   try {
-    const url = (req.body?.url || req.query?.url) as string;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        // ignore
+      }
+    }
+    const url = (body?.url || req.query?.url) as string;
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'URL is required' });
     }
