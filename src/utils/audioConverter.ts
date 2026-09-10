@@ -218,20 +218,6 @@ export async function convertTrackToFormat(
 
   const downloadUrl = `/api/suno/download?${queryParams.toString()}`;
 
-  onProgress?.(30);
-
-  const res = await fetch(downloadUrl);
-  if (!res.ok) {
-    let message = `Audio processing error: HTTP ${res.status}`;
-    try {
-      const errJson = await res.json();
-      if (errJson?.error) message = errJson.error;
-    } catch {
-      // ignore
-    }
-    throw new Error(message);
-  }
-
   const mimeMap: Record<string, string> = {
     mp3: 'audio/mpeg',
     wav: 'audio/wav',
@@ -240,15 +226,47 @@ export async function convertTrackToFormat(
     ogg: 'audio/ogg',
   };
 
-  onProgress?.(70);
-  const rawBlob = await res.blob();
-  const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
-  onProgress?.(100);
+  let res: Response | null = null;
+  try {
+    res = await fetch(downloadUrl);
+  } catch (e) {
+    res = null;
+  }
 
-  return {
-    blob,
-    fileName,
-  };
+  if (res && res.ok) {
+    onProgress?.(70);
+    const rawBlob = await res.blob();
+    const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
+    onProgress?.(100);
+    return {
+      blob,
+      fileName,
+    };
+  }
+
+  // Fallback to client-side direct fetch if backend endpoint returns non-OK or connection error
+  const fallbackUrl = track.audio_url || `https://cdn1.suno.ai/${track.id}.mp3`;
+  try {
+    onProgress?.(50);
+    const buffer = await fetchAudioData(fallbackUrl, onProgress);
+    const blob = new Blob([buffer], { type: mimeMap[format] || 'audio/mpeg' });
+    onProgress?.(100);
+    return {
+      blob,
+      fileName,
+    };
+  } catch (fallbackErr: any) {
+    let message = `Audio processing error: ${res ? `HTTP ${res.status}` : fallbackErr.message || 'Download failed'}`;
+    if (res) {
+      try {
+        const errJson = await res.json();
+        if (errJson?.error) message = errJson.error;
+      } catch {
+        // ignore
+      }
+    }
+    throw new Error(message);
+  }
 }
 
 // Direct browser streaming download for single files - skips JS memory buffering

@@ -1,15 +1,16 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-const CACHE_DIR = '/tmp/suno_cache';
+const CACHE_DIR = path.join(os.tmpdir(), 'suno_cache');
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
@@ -282,14 +283,24 @@ async function transcodeTrack(
       execFile('ffmpeg', args, (err) => {
         activeTranscodes.delete(cacheKey);
         if (err) {
-          console.error(`ffmpeg transcode error for ${trackId} (${format}):`, err);
+          console.warn(`ffmpeg transcode warning/error for ${trackId} (${format}):`, err.message);
           // If mp3 with cover failed, fallback to audio only
           if (format === 'mp3' && coverImagePath) {
             execFile('ffmpeg', ['-y', '-i', inputPath, '-vn', '-c:a', 'libmp3lame', '-b:a', safeBitrate || '320k', '-id3v2_version', '3', ...metaArgs, outPath], (fallbackErr) => {
-              if (fallbackErr) reject(fallbackErr);
-              else resolve(outPath);
+              if (fallbackErr) {
+                if (fs.existsSync(inputPath)) {
+                  return resolve(inputPath);
+                }
+                reject(fallbackErr);
+              } else {
+                resolve(outPath);
+              }
             });
             return;
+          }
+          // If ffmpeg is missing (e.g. Vercel serverless environment), fallback to original decrypted file
+          if (fs.existsSync(inputPath)) {
+            return resolve(inputPath);
           }
           reject(err);
         } else {
@@ -1065,9 +1076,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
