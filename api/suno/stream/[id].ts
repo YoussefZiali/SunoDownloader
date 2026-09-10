@@ -1,6 +1,12 @@
-import type { Request, Response } from 'express';
-import app from '../../../server-app';
+import { handleStreamReq } from '../../../server-app';
 
-export default function handler(req: Request, res: Response) {
-  return app(req, res);
+export default async function handler(req: any, res: any) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Authorization, Accept, X-Requested-With');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Disposition');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  return handleStreamReq(req, res);
 }

@@ -261,9 +261,9 @@ export default function App() {
 
     const targetApi = `https://studio-api.prod.suno.com/api/clip/${trackId}`;
     const proxyEndpoints = [
-      `https://corsproxy.io/?${encodeURIComponent(targetApi)}`,
       `https://api.allorigins.win/raw?url=${encodeURIComponent(targetApi)}`,
       `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetApi)}`,
+      `https://corsproxy.io/?${encodeURIComponent(targetApi)}`,
       targetApi,
     ];
 
@@ -272,8 +272,16 @@ export default function App() {
       try {
         const res = await fetch(ep);
         if (res.ok) {
-          clip = await res.json();
-          if (clip && clip.id) break;
+          const resText = await res.text();
+          try {
+            const parsed = JSON.parse(resText);
+            if (parsed && (parsed.id || parsed.title)) {
+              clip = parsed;
+              break;
+            }
+          } catch {
+            // ignore non-json
+          }
         }
       } catch {
         // try next endpoint

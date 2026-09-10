@@ -801,27 +801,25 @@ function makeContentDisposition(filename: string): string {
 // API ROUTES
 // -------------------------------------------------------------
 
-// System Health & Diagnostics
-app.get('/api/health', async (req: Request, res: Response) => {
+// -------------------------------------------------------------
+// API ROUTE HANDLERS
+// -------------------------------------------------------------
+
+export async function handleHealthReq(req: any, res: any) {
   const hasFfmpeg = await isFfmpegAvailable();
-  res.json({
+  return res.json({
     status: 'ok',
     ffmpeg: hasFfmpeg,
     timestamp: new Date().toISOString(),
     platform: process.env.VERCEL ? 'vercel' : 'node',
   });
-});
+}
 
-// Master API to resolve ANY Suno link (including short links https://suno.com/s/...)
-app.all('/api/suno/resolve', async (req: Request, res: Response) => {
+export async function handleResolveReq(req: any, res: any) {
   try {
     let body = req.body;
     if (typeof body === 'string') {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        // ignore
-      }
+      try { body = JSON.parse(body); } catch {}
     }
     const url = (body?.url || req.query?.url) as string;
     if (!url || typeof url !== 'string') {
@@ -839,9 +837,7 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
         const parsedUrl = new URL(resolvedUrl);
         const urlSh = parsedUrl.searchParams.get('sh');
         if (urlSh) sh = urlSh;
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       const playlist = await fetchPlaylistData(playlistId, sh);
       return res.json({
@@ -856,7 +852,6 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
     if (uuidMatch) {
       const targetId = uuidMatch[0];
 
-      // If URL explicitly points to song/clip
       if (resolvedUrl.includes('/song/') || resolvedUrl.includes('/clip/')) {
         const track = await fetchTrackData(targetId);
         return res.json({
@@ -866,7 +861,6 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
         });
       }
 
-      // Otherwise, attempt track first, then fallback to playlist
       try {
         const track = await fetchTrackData(targetId);
         return res.json({
@@ -893,12 +887,15 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
     console.error('Resolve error:', err);
     return res.status(404).json({ error: err.message || 'Failed to resolve Suno link' });
   }
-});
+}
 
-// API to resolve multiple Suno URLs in bulk
-app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
+export async function handleResolveBatchReq(req: any, res: any) {
   try {
-    const { urls } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch {}
+    }
+    const urls = body?.urls || req.query?.urls;
     if (!Array.isArray(urls) || urls.length === 0) {
       return res.status(400).json({ error: 'urls array is required' });
     }
@@ -945,12 +942,15 @@ app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Batch resolve failed' });
   }
-});
+}
 
-// API to parse arbitrary text/URLs
-app.post('/api/suno/parse', async (req: Request, res: Response) => {
+export async function handleParseReq(req: any, res: any) {
   try {
-    const { input } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch {}
+    }
+    const input = body?.input || req.query?.input;
     if (!input || typeof input !== 'string') {
       return res.status(400).json({ error: 'Input text or URL is required' });
     }
@@ -963,11 +963,10 @@ app.post('/api/suno/parse', async (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Failed to parse Suno input' });
   }
-});
+}
 
-// API to fetch Suno Track metadata by ID
-app.get('/api/suno/track/:id', async (req: Request, res: Response) => {
-  const rawId = req.params.id;
+export async function handleTrackReq(req: any, res: any) {
+  const rawId = (req.params?.id || req.query?.id) as string;
   if (!rawId) {
     return res.status(400).json({ error: 'Track ID is required' });
   }
@@ -981,23 +980,21 @@ app.get('/api/suno/track/:id', async (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Failed to fetch Suno track' });
   }
-});
+}
 
-// API to fetch Suno playlist
-app.get('/api/suno/playlist/:id', async (req: Request, res: Response) => {
-  const playlistId = req.params.id;
-  const sh = (req.query.sh as string) || '';
+export async function handlePlaylistReq(req: any, res: any) {
+  const playlistId = (req.params?.id || req.query?.id) as string;
+  const sh = (req.query?.sh as string) || '';
   try {
     const playlist = await fetchPlaylistData(playlistId, sh);
     return res.json(playlist);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Failed to fetch Suno playlist' });
   }
-});
+}
 
-// Direct Audio Stream endpoint with Range header & seeking support
-app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
-  const rawId = req.params.id;
+export async function handleStreamReq(req: any, res: any) {
+  const rawId = (req.params?.id || req.query?.id) as string;
   if (!rawId) {
     return res.status(400).json({ error: 'Track ID required' });
   }
@@ -1026,11 +1023,10 @@ app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
       return res.status(500).json({ error: `Audio stream unavailable: ${err.message}` });
     }
   }
-});
+}
 
-// Dedicated audio export & download endpoint
-app.get('/api/suno/download', async (req: Request, res: Response) => {
-  const rawId = req.query.id as string;
+export async function handleDownloadReq(req: any, res: any) {
+  const rawId = req.query?.id as string;
   const uuidMatch = rawId?.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
   const trackId = uuidMatch ? uuidMatch[0] : rawId?.trim();
 
@@ -1038,23 +1034,23 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Valid Suno track ID required' });
   }
 
-  const rawFormat = ((req.query.format as string) || 'mp3').toLowerCase();
+  const rawFormat = ((req.query?.format as string) || 'mp3').toLowerCase();
   const format = (['wav', 'flac', 'm4a', 'ogg'].includes(rawFormat) ? rawFormat : 'mp3') as 'mp3' | 'wav' | 'flac' | 'm4a' | 'ogg';
-  const bitrate = (req.query.bitrate as string) || '320k';
-  const bitDepth = ((req.query.bitDepth as string) || '24-bit') as '16-bit' | '24-bit';
-  const title = (req.query.title as string) || 'Suno Song';
-  const artist = (req.query.artist as string) || 'Suno Artist';
-  const coverUrl = (req.query.cover as string) || '';
-  const audioUrl = (req.query.audioUrl as string) || '';
+  const bitrate = (req.query?.bitrate as string) || '320k';
+  const bitDepth = ((req.query?.bitDepth as string) || '24-bit') as '16-bit' | '24-bit';
+  const title = (req.query?.title as string) || 'Suno Song';
+  const artist = (req.query?.artist as string) || 'Suno Artist';
+  const coverUrl = (req.query?.cover as string) || '';
+  const audioUrl = (req.query?.audioUrl as string) || '';
 
   const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
   
-  const startTime = req.query.startTime ? Number(req.query.startTime) : undefined;
-  const endTime = req.query.endTime ? Number(req.query.endTime) : undefined;
-  const album = (req.query.album as string) || undefined;
-  const year = (req.query.year as string) || undefined;
-  const genre = (req.query.genre as string) || undefined;
-  const normalize = req.query.normalize === 'true';
+  const startTime = req.query?.startTime ? Number(req.query.startTime) : undefined;
+  const endTime = req.query?.endTime ? Number(req.query.endTime) : undefined;
+  const album = (req.query?.album as string) || undefined;
+  const year = (req.query?.year as string) || undefined;
+  const genre = (req.query?.genre as string) || undefined;
+  const normalize = req.query?.normalize === 'true';
 
   try {
     const result = await transcodeTrack(trackId, format, bitrate, bitDepth, title, artist, coverUrl, {
@@ -1097,11 +1093,10 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
       return res.status(500).json({ error: `Audio processing error: ${err.message}` });
     }
   }
-});
+}
 
-// Audio proxy to bypass browser CORS for WebAudio decoding and direct streaming
-app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
-  const audioUrl = req.query.url as string;
+export async function handleProxyAudioReq(req: any, res: any) {
+  const audioUrl = req.query?.url as string;
   if (!audioUrl) {
     return res.status(400).json({ error: 'Missing url query param' });
   }
@@ -1145,7 +1140,7 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
     'Referer': 'https://suno.com/',
   };
 
-  if (req.headers.range) {
+  if (req.headers?.range) {
     reqHeaders['Range'] = req.headers.range as string;
   }
 
@@ -1199,7 +1194,7 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
       res.setHeader('Content-Length', contentLength);
     }
 
-    if (req.query.download === 'true') {
+    if (req.query?.download === 'true') {
       const filename = (req.query.filename as string) || 'suno-song.mp3';
       res.setHeader('Content-Disposition', makeContentDisposition(filename));
     }
@@ -1209,11 +1204,10 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Proxy error' });
   }
-});
+}
 
-// Image proxy for clean thumbnail loading & album art bundling
-app.get('/api/suno/proxy-image', async (req: Request, res: Response) => {
-  const imageUrl = req.query.url as string;
+export async function handleProxyImageReq(req: any, res: any) {
+  const imageUrl = req.query?.url as string;
   if (!imageUrl) {
     return res.status(400).json({ error: 'Missing url query param' });
   }
@@ -1235,7 +1229,18 @@ app.get('/api/suno/proxy-image', async (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Image proxy error' });
   }
-});
+}
+
+app.get('/api/health', handleHealthReq);
+app.all('/api/suno/resolve', handleResolveReq);
+app.post('/api/suno/resolve-batch', handleResolveBatchReq);
+app.post('/api/suno/parse', handleParseReq);
+app.get('/api/suno/track/:id', handleTrackReq);
+app.get('/api/suno/playlist/:id', handlePlaylistReq);
+app.get('/api/suno/stream/:id', handleStreamReq);
+app.get('/api/suno/download', handleDownloadReq);
+app.get('/api/suno/proxy-audio', handleProxyAudioReq);
+app.get('/api/suno/proxy-image', handleProxyImageReq);
 
 export { app };
 export default app;
