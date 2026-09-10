@@ -1099,22 +1099,24 @@ export async function handleDownloadReq(req: any, res: any) {
       safeFilename = `${sanitize(artist)} - ${sanitize(title)} [Clip ${sMin}m${sSec}s-${eMin}m${eSec}s].${effectiveExt}`;
     }
 
-    const fileBuffer = fs.readFileSync(result.filePath);
-    res.setHeader('Content-Type', result.mimeType);
-    res.setHeader('Content-Disposition', makeContentDisposition(safeFilename));
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Content-Length', fileBuffer.length);
-    return res.send(fileBuffer);
+    res.download(result.filePath, safeFilename, {
+      headers: {
+        'Content-Type': result.mimeType,
+        'Accept-Ranges': 'bytes'
+      }
+    });
+    return;
   } catch (err: any) {
     console.error(`Download failed for ${trackId}:`, err);
     try {
       const rawFallback = await getDecryptedAudioPath(trackId, audioUrl);
       const fallbackFilename = `${sanitize(artist)} - ${sanitize(title)}.m4a`;
-      const fileBuffer = fs.readFileSync(rawFallback);
-      res.setHeader('Content-Type', 'audio/mp4');
-      res.setHeader('Content-Disposition', makeContentDisposition(fallbackFilename));
-      res.setHeader('Content-Length', fileBuffer.length);
-      return res.send(fileBuffer);
+      res.download(rawFallback, fallbackFilename, {
+        headers: {
+          'Content-Type': 'audio/mp4'
+        }
+      });
+      return;
     } catch {
       return res.status(500).json({ error: `Audio processing error: ${err.message}` });
     }
