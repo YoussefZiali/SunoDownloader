@@ -45,10 +45,59 @@ async function isFfmpegAvailable(): Promise<boolean> {
 const activeTranscodes = new Map<string, Promise<string>>();
 
 // Fetches rights and decrypts Suno's AES-CTR encrypted audio stream into a valid local audio file
-async function getDecryptedAudioPath(trackId: string): Promise<string> {
+async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promise<string> {
   const decryptedPath = path.join(CACHE_DIR, `${trackId}_decrypted.m4a`);
   if (fs.existsSync(decryptedPath) && fs.statSync(decryptedPath).size > 5000) {
     return decryptedPath;
+  }
+
+  // 0. If direct audioUrl is provided, attempt to fetch it first
+  if (audioUrl && audioUrl.startsWith('http')) {
+    try {
+      const res = await fetch(audioUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+      });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 5000) {
+          fs.writeFileSync(decryptedPath, buf);
+          return decryptedPath;
+        }
+      }
+    } catch {
+      // continue to next method
+    }
+  }
+
+  // 0b. Attempt to fetch clip metadata directly from Suno's official studio API
+  try {
+    const apiRes = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+    });
+    if (apiRes.ok) {
+      const clipJson = await apiRes.json();
+      if (clipJson?.audio_url && typeof clipJson.audio_url === 'string' && clipJson.audio_url.startsWith('http')) {
+        const audioRes = await fetch(clipJson.audio_url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          },
+        });
+        if (audioRes.ok) {
+          const buf = Buffer.from(await audioRes.arrayBuffer());
+          if (buf.length > 5000) {
+            fs.writeFileSync(decryptedPath, buf);
+            return decryptedPath;
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`Studio API direct audio fetch failed for ${trackId}:`, e.message);
   }
 
   // 1. Fetch decryption rights from the Suno rights service
@@ -139,9 +188,14 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
 
   // Fallback: Direct CDN stream if accessible (unencrypted mp4 / cdn streams)
   const candidateUrls = [
-    `https://cdn1.suno.ai/${trackId}.mp4`,
-    `https://audiopipe.suno.ai/?item_id=${trackId}`,
+    ...(audioUrl && audioUrl.startsWith('http') ? [audioUrl] : []),
     `https://cdn1.suno.ai/${trackId}.mp3`,
+    `https://cdn1.suno.ai/${trackId}.mp4`,
+    `https://cdn1.suno.ai/${trackId}.m4a`,
+    `https://cdn2.suno.ai/${trackId}.mp3`,
+    `https://cdn2.suno.ai/${trackId}.mp4`,
+    `https://audiopipe.suno.ai/v1/change_target?item_id=${trackId}`,
+    `https://audiopipe.suno.ai/?item_id=${trackId}`,
   ];
 
   for (const cdnUrl of candidateUrls) {
@@ -215,9 +269,10 @@ async function transcodeTrack(
     year?: string;
     genre?: string;
     normalize?: boolean;
+    audioUrl?: string;
   } = {}
 ): Promise<{ filePath: string; format: string; mimeType: string }> {
-  const inputPath = await getDecryptedAudioPath(trackId);
+  const inputPath = await getDecryptedAudioPath(trackId, options.audioUrl);
 
   // Check if ffmpeg is installed on this host (Vercel serverless lacks ffmpeg binary)
   const hasFfmpeg = await isFfmpegAvailable();
@@ -656,9 +711,9 @@ async function fetchTrackData(trackId: string): Promise<any> {
     ? Math.round(clipData.duration)
     : 180;
 
-  const audioUrl = clipData.audio_url && !clipData.audio_url.includes('forbidden')
+  const audioUrl = clipData.audio_url && !clipData.audio_url.includes('forbidden') && clipData.audio_url.startsWith('http')
     ? clipData.audio_url
-    : `/api/suno/stream/${trackId}.mp3`;
+    : `https://cdn1.suno.ai/${trackId}.mp3`;
 
   return {
     id: trackId,
@@ -923,16 +978,20 @@ app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
 
   try {
     const result = await transcodeTrack(trackId, 'mp3', '320k');
+    const fileBuffer = fs.readFileSync(result.filePath);
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(result.filePath, { acceptRanges: true });
+    res.setHeader('Content-Length', fileBuffer.length);
+    return res.send(fileBuffer);
   } catch (err: any) {
     console.warn(`Stream transcode fallback for ${trackId}:`, err.message);
     try {
       const rawPath = await getDecryptedAudioPath(trackId);
+      const fileBuffer = fs.readFileSync(rawPath);
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(rawPath, { acceptRanges: true });
+      res.setHeader('Content-Length', fileBuffer.length);
+      return res.send(fileBuffer);
     } catch (fallbackErr: any) {
       console.error(`Stream delivery failure for ${trackId}:`, fallbackErr.message);
       return res.status(500).json({ error: `Audio stream unavailable: ${err.message}` });
@@ -957,6 +1016,7 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
   const title = (req.query.title as string) || 'Suno Song';
   const artist = (req.query.artist as string) || 'Suno Artist';
   const coverUrl = (req.query.cover as string) || '';
+  const audioUrl = (req.query.audioUrl as string) || '';
 
   const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
   
@@ -975,6 +1035,7 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
       year,
       genre,
       normalize,
+      audioUrl,
     });
 
     const effectiveExt = result.format === 'm4a' ? 'm4a' : result.format;
@@ -987,18 +1048,22 @@ app.get('/api/suno/download', async (req: Request, res: Response) => {
       safeFilename = `${sanitize(artist)} - ${sanitize(title)} [Clip ${sMin}m${sSec}s-${eMin}m${eSec}s].${effectiveExt}`;
     }
 
+    const fileBuffer = fs.readFileSync(result.filePath);
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Content-Disposition', makeContentDisposition(safeFilename));
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(result.filePath, { acceptRanges: true });
+    res.setHeader('Content-Length', fileBuffer.length);
+    return res.send(fileBuffer);
   } catch (err: any) {
     console.error(`Download failed for ${trackId}:`, err);
     try {
-      const rawFallback = await getDecryptedAudioPath(trackId);
+      const rawFallback = await getDecryptedAudioPath(trackId, audioUrl);
       const fallbackFilename = `${sanitize(artist)} - ${sanitize(title)}.m4a`;
+      const fileBuffer = fs.readFileSync(rawFallback);
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Content-Disposition', makeContentDisposition(fallbackFilename));
-      return res.sendFile(rawFallback, { acceptRanges: true });
+      res.setHeader('Content-Length', fileBuffer.length);
+      return res.send(fileBuffer);
     } catch {
       return res.status(500).json({ error: `Audio processing error: ${err.message}` });
     }
@@ -1017,10 +1082,12 @@ app.get('/api/suno/proxy-audio', async (req: Request, res: Response) => {
 
   if (trackUuid) {
     try {
-      const localFile = await getDecryptedAudioPath(trackUuid);
+      const localFile = await getDecryptedAudioPath(trackUuid, audioUrl);
+      const fileBuffer = fs.readFileSync(localFile);
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(localFile, { acceptRanges: true });
+      res.setHeader('Content-Length', fileBuffer.length);
+      return res.send(fileBuffer);
     } catch (e: any) {
       console.warn(`proxy-audio decrypt fallback for ${trackUuid}:`, e.message);
     }
