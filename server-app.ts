@@ -16,6 +16,18 @@ if (!fs.existsSync(CACHE_DIR)) {
   }
 }
 
+// Global URL Normalization Middleware for Vercel Serverless rewrites
+app.use((req, res, next) => {
+  const forwarded = (req.headers['x-forwarded-url'] as string) || (req.headers['x-matched-path'] as string);
+  if (forwarded && (forwarded.startsWith('/api') || forwarded.startsWith('/suno'))) {
+    if (!req.url || req.url === '/' || req.url.startsWith('/?')) {
+      const q = req.url?.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      req.url = forwarded.split('?')[0] + q;
+    }
+  }
+  next();
+});
+
 // Global CORS & Range Headers Middleware
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -53,14 +65,45 @@ async function isFfmpegAvailable(): Promise<boolean> {
 // In-flight transcode promises to avoid duplicate transcode processes
 const activeTranscodes = new Map<string, Promise<string>>();
 
-// Fetches rights and decrypts Suno's AES-CTR encrypted audio stream into a valid local audio file
+// Fetches audio stream into a valid local audio file (prioritizing high-speed direct Suno CDNs)
 async function getDecryptedAudioPath(trackId: string): Promise<string> {
   const decryptedPath = path.join(CACHE_DIR, `${trackId}_decrypted.m4a`);
   if (fs.existsSync(decryptedPath) && fs.statSync(decryptedPath).size > 5000) {
     return decryptedPath;
   }
 
-  // 1. Fetch decryption rights from the Suno rights service
+  // 1. Direct Suno CDN streams (Fastest, unencrypted, highly reliable)
+  const candidateUrls = [
+    `https://cdn1.suno.ai/${trackId}.mp4`,
+    `https://d2lwuy8qc234o3.cloudfront.net/2/clip/${trackId}.m4a`,
+    `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackId}.m4a`,
+    `https://audiopipe.suno.ai/?item_id=${trackId}`,
+  ];
+
+  for (const cdnUrl of candidateUrls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      const directRes = await fetch(cdnUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+      });
+      clearTimeout(timeout);
+      if (directRes.ok) {
+        const buf = Buffer.from(await directRes.arrayBuffer());
+        if (buf.length > 5000) {
+          fs.writeFileSync(decryptedPath, buf);
+          return decryptedPath;
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // 2. Secondary fallback: AES-CTR decryption via rights service
   let rights: any = null;
   const rightsEndpoints = [
     'https://yellow-salad.aibiei.com/rights',
@@ -68,7 +111,10 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
 
   for (const ep of rightsEndpoints) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
       const rightsRes = await fetch(ep, {
+        signal: controller.signal,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,6 +127,7 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
           content_params: { content_id: trackId, content_type: 'clip' },
         }),
       });
+      clearTimeout(timeout);
 
       if (rightsRes.ok) {
         rights = await rightsRes.json();
@@ -146,33 +193,7 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
     }
   }
 
-  // Fallback: Direct CDN stream if accessible (unencrypted mp4 / cdn streams)
-  const candidateUrls = [
-    `https://cdn1.suno.ai/${trackId}.mp4`,
-    `https://audiopipe.suno.ai/?item_id=${trackId}`,
-    `https://cdn1.suno.ai/${trackId}.mp3`,
-  ];
-
-  for (const cdnUrl of candidateUrls) {
-    try {
-      const directRes = await fetch(cdnUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-      });
-      if (directRes.ok) {
-        const buf = Buffer.from(await directRes.arrayBuffer());
-        if (buf.length > 5000) {
-          fs.writeFileSync(decryptedPath, buf);
-          return decryptedPath;
-        }
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  throw new Error(`Unable to fetch or decrypt audio for track ${trackId}`);
+  throw new Error(`Unable to fetch or stream audio for track ${trackId}`);
 }
 
 // Helper to fetch and cache track cover artwork
@@ -533,130 +554,157 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
   throw new Error('Playlist not found on Suno');
 }
 
+function decodeHtmlEntities(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
 // Reusable Track Fetcher with multi-tiered resilient fallback
 async function fetchTrackData(trackId: string): Promise<any> {
   let clipData: any = null;
 
-  // 1. Try studio-api.prod.suno.com/api/clip/:id
+  // 1. Try Suno official oEmbed endpoint (public, unauthenticated, reliable)
   try {
-    const apiRes = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const oembedRes = await fetch(`https://studio-api-prod.suno.com/api/oembed?url=https%3A%2F%2Fsuno.com%2Fsong%2F${trackId}`, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'application/json',
       },
     });
-    if (apiRes.ok) {
-      clipData = await apiRes.json();
+    clearTimeout(timeout);
+
+    if (oembedRes.ok) {
+      const oembed = await oembedRes.json();
+      if (oembed && oembed.title) {
+        let title = decodeHtmlEntities(oembed.title);
+        let artist = 'Suno Artist';
+        if (title.includes(' by ')) {
+          const parts = title.split(' by ');
+          artist = parts[parts.length - 1].trim();
+          title = parts.slice(0, parts.length - 1).join(' by ').trim();
+        }
+        clipData = {
+          id: trackId,
+          title: title || `Suno Track ${trackId.slice(0, 8)}`,
+          display_name: artist,
+          handle: 'suno_ai',
+          image_large_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+          image_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+          video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
+          duration: 180,
+        };
+      }
     }
   } catch {
     // continue
   }
 
-  // 1b. Try studio-api.suno.ai/api/clip/:id
-  if (!clipData) {
-    try {
-      const apiRes = await fetch(`https://studio-api.suno.ai/api/clip/${trackId}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-        },
-      });
-      if (apiRes.ok) {
-        clipData = await apiRes.json();
-      }
-    } catch {
-      // continue
-    }
-  }
+  // 2. Try Suno Song page (Next.js Flight RSC stream & meta tags)
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const songRes = await fetch(`https://suno.com/song/${trackId}`, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    clearTimeout(timeout);
 
-  // 2. Try Suno embed page JSON extraction
-  if (!clipData) {
-    try {
-      const embedRes = await fetch(`https://suno.com/embed/${trackId}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
-      if (embedRes.ok) {
-        const html = await embedRes.text();
-        const escapedClipIdx = html.indexOf('\\"clip\\":');
-        if (escapedClipIdx !== -1) {
-          const sub = html.slice(escapedClipIdx + 9);
-          let depth = 0;
-          let endIdx = -1;
-          let inEscape = false;
-          for (let i = 0; i < sub.length; i++) {
-            if (inEscape) {
-              inEscape = false;
-              continue;
+    if (songRes.ok) {
+      const html = await songRes.text();
+
+      // Extract JSON clip payload (unescaped or escaped)
+      const clipIdx = html.indexOf('"clip":{') !== -1 ? html.indexOf('"clip":{') : html.indexOf('\\"clip\\":{');
+      if (clipIdx !== -1) {
+        const isEscaped = html[clipIdx] === '\\';
+        const startOffset = isEscaped ? clipIdx + 8 : clipIdx + 7;
+        const sub = html.slice(startOffset);
+        let depth = 0;
+        let endIdx = -1;
+        for (let i = 0; i < Math.min(sub.length, 12000); i++) {
+          if (sub[i] === '{') depth++;
+          else if (sub[i] === '}') {
+            depth--;
+            if (depth === 0) {
+              endIdx = i + 1;
+              break;
             }
-            if (sub[i] === '\\') {
-              inEscape = true;
-              continue;
-            }
-            if (sub[i] === '{') depth++;
-            else if (sub[i] === '}') {
-              depth--;
-              if (depth === 0) {
-                endIdx = i + 1;
-                break;
-              }
-            }
-          }
-          if (endIdx !== -1) {
-            const rawEscaped = sub.slice(0, endIdx);
-            const unescaped = rawEscaped.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-            clipData = JSON.parse(unescaped);
           }
         }
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  // 3. Fallback: Parse meta tags and JSON-LD from song page
-  if (!clipData) {
-    try {
-      const songRes = await fetch(`https://suno.com/song/${trackId}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
-      if (songRes.ok) {
-        const html = await songRes.text();
-        const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i);
-        const descMatch = html.match(/<meta name="description" content="([^"]+)"/i);
-        const imageMatch = html.match(/<meta property="og:image" content="([^"]+)"/i);
-
-        let artist = 'Suno Artist';
-        let handle = '@suno_user';
-        if (descMatch) {
-          const authorMatch = descMatch[1].match(/by\s+([^(@]+)\s*\((@[^)]+)\)/i);
-          if (authorMatch) {
-            artist = authorMatch[1].trim();
-            handle = authorMatch[2].trim();
-          }
+        if (endIdx !== -1) {
+          try {
+            const raw = sub.slice(0, endIdx);
+            const parsed = JSON.parse(isEscaped ? raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\') : raw);
+            if (parsed && (parsed.title || parsed.id)) {
+              clipData = { ...clipData, ...parsed };
+            }
+          } catch {}
         }
+      }
 
+      // Check meta tags
+      const titleMatch = html.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i) ||
+                         html.match(/<title>([^<|]+)(?:\||\-).*?<\/title>/i);
+      const descMatch = html.match(/<meta name=["']description["'] content=["']([^"']+)["']/i);
+      const imageMatch = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
+
+      let artist = clipData?.display_name || 'Suno Artist';
+      let handle = clipData?.handle || 'suno_user';
+      if (descMatch) {
+        const decodedDesc = decodeHtmlEntities(descMatch[1]);
+        const authorMatch = decodedDesc.match(/by\s+([^(@]+)\s*\((@[^)]+)\)/i);
+        if (authorMatch) {
+          artist = authorMatch[1].trim();
+          handle = authorMatch[2].trim().replace('@', '');
+        }
+      }
+
+      if (!clipData || !clipData.title) {
+        const rawTitle = titleMatch ? decodeHtmlEntities(titleMatch[1].trim()) : `Suno Track ${trackId.slice(0, 8)}`;
         clipData = {
           id: trackId,
-          title: titleMatch ? titleMatch[1] : `Suno Track ${trackId.slice(0, 8)}`,
+          title: rawTitle,
           display_name: artist,
-          handle: handle.replace('@', ''),
+          handle,
           image_large_url: imageMatch ? imageMatch[1] : `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+          image_url: imageMatch ? imageMatch[1] : `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+          video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
           duration: 180,
         };
+      } else {
+        if (imageMatch && !clipData.image_large_url) clipData.image_large_url = imageMatch[1];
+        if (artist && (!clipData.display_name || clipData.display_name === 'Suno Artist')) clipData.display_name = artist;
       }
-    } catch {
-      // continue
     }
+  } catch {
+    // continue
   }
 
+  // 3. Fallback: Always provide guaranteed track data for valid UUID so download/playback works
   if (!clipData) {
-    throw new Error('Track not found on Suno');
+    clipData = {
+      id: trackId,
+      title: `Suno Track ${trackId.slice(0, 8)}`,
+      display_name: 'Suno Artist',
+      handle: 'suno_user',
+      image_large_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+      image_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+      video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
+      duration: 180,
+    };
   }
 
   const duration = clipData.metadata?.duration
@@ -671,9 +719,9 @@ async function fetchTrackData(trackId: string): Promise<any> {
 
   return {
     id: trackId,
-    title: clipData.title || `Suno Track ${trackId.slice(0, 8)}`,
-    artist: clipData.display_name || clipData.handle || 'Suno Artist',
-    handle: clipData.handle ? `@${clipData.handle}` : '@suno_user',
+    title: decodeHtmlEntities(clipData.title || `Suno Track ${trackId.slice(0, 8)}`),
+    artist: decodeHtmlEntities(clipData.display_name || clipData.handle || 'Suno Artist'),
+    handle: clipData.handle ? (clipData.handle.startsWith('@') ? clipData.handle : `@${clipData.handle}`) : '@suno_user',
     audio_url: audioUrl,
     video_url: clipData.video_url || `https://cdn1.suno.ai/${trackId}.mp4`,
     image_url: clipData.image_large_url || clipData.image_url || `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
@@ -682,7 +730,7 @@ async function fetchTrackData(trackId: string): Promise<any> {
     play_count: clipData.play_count || 120,
     upvote_count: clipData.upvote_count || 12,
     tags: clipData.metadata?.tags || clipData.display_tags || '',
-    model: clipData.major_model_version || 'v6',
+    model: clipData.major_model_version || 'v4',
     created_at: clipData.created_at || new Date().toISOString(),
     isVerified: clipData.is_verified || false,
     iframe_url: `https://suno.com/embed/${trackId}`,
@@ -1000,7 +1048,16 @@ apiRouter.get('/suno/download', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', result.mimeType);
     res.setHeader('Content-Disposition', makeContentDisposition(safeFilename));
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(path.resolve(result.filePath), { acceptRanges: true });
+    return res.sendFile(path.resolve(result.filePath), { acceptRanges: true }, (err) => {
+      if (err && !res.headersSent) {
+        try {
+          const stream = fs.createReadStream(result.filePath);
+          stream.pipe(res);
+        } catch {
+          res.status(500).end();
+        }
+      }
+    });
   } catch (err: any) {
     console.error(`Download failed for ${trackId}:`, err);
     try {
@@ -1008,7 +1065,16 @@ apiRouter.get('/suno/download', async (req: Request, res: Response) => {
       const fallbackFilename = `${sanitize(artist)} - ${sanitize(title)}.m4a`;
       res.setHeader('Content-Type', 'audio/mp4');
       res.setHeader('Content-Disposition', makeContentDisposition(fallbackFilename));
-      return res.sendFile(path.resolve(rawFallback), { acceptRanges: true });
+      return res.sendFile(path.resolve(rawFallback), { acceptRanges: true }, (fallbackErr) => {
+        if (fallbackErr && !res.headersSent) {
+          try {
+            const stream = fs.createReadStream(rawFallback);
+            stream.pipe(res);
+          } catch {
+            res.status(500).end();
+          }
+        }
+      });
     } catch {
       return res.status(500).json({ error: `Audio processing error: ${err.message}` });
     }
@@ -1146,6 +1212,10 @@ apiRouter.get('/suno/proxy-image', async (req: Request, res: Response) => {
 app.use('/api', apiRouter);
 app.use((req, res, next) => {
   if (req.path.startsWith('/suno') || req.path === '/health') {
+    return apiRouter(req, res, next);
+  }
+  if (req.path === '/download' || req.path === '/resolve' || req.path === '/proxy-audio' || req.path === '/proxy-image') {
+    req.url = '/suno' + req.url;
     return apiRouter(req, res, next);
   }
   next();

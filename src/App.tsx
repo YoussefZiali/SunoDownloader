@@ -207,6 +207,57 @@ export default function App() {
       });
 
       if (!res.ok) {
+        const uuidMatch = trimmed.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+        if (uuidMatch) {
+          const trackId = uuidMatch[0];
+          let fallbackTitle = `Suno Track (${trackId.slice(0, 8)})`;
+          let fallbackArtist = 'Suno Artist';
+          try {
+            const oembedRes = await fetch(`https://studio-api-prod.suno.com/api/oembed?url=https%3A%2F%2Fsuno.com%2Fsong%2F${trackId}`);
+            if (oembedRes.ok) {
+              const oe = await oembedRes.json();
+              if (oe?.title) {
+                fallbackTitle = oe.title;
+                if (fallbackTitle.includes(' by ')) {
+                  const parts = fallbackTitle.split(' by ');
+                  fallbackArtist = parts[parts.length - 1].trim();
+                  fallbackTitle = parts.slice(0, parts.length - 1).join(' by ').trim();
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          const fallbackTrack: SunoTrack = {
+            id: trackId,
+            title: fallbackTitle,
+            artist: fallbackArtist,
+            handle: '@suno_ai',
+            audio_url: `/api/suno/stream/${trackId}.mp3`,
+            video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
+            image_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+            duration: 180,
+            duration_formatted: '3:00',
+            play_count: 0,
+            upvote_count: 0,
+            tags: 'Suno AI',
+            model: 'v4',
+            created_at: new Date().toISOString(),
+            isVerified: true,
+            iframe_url: `https://suno.com/embed/${trackId}`,
+          };
+
+          setCurrentTrack(fallbackTrack);
+          setCurrentPlaylist(null);
+          setCustomMetadata({});
+          setClipRange({ enabled: false, startTime: 0, endTime: 30 });
+          if (settings.autoDownloadOnPaste) {
+            setTimeout(() => handleDownloadTrack(fallbackTrack, settings.defaultFormat), 500);
+          }
+          return;
+        }
+
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.error || 'Failed to resolve Suno link. Please verify URL.');
       }
