@@ -45,6 +45,35 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
     }
   }
 
+  // 0b. Attempt to fetch clip metadata directly from Suno's official studio API
+  try {
+    const apiRes = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+    });
+    if (apiRes.ok) {
+      const clipJson = await apiRes.json();
+      if (clipJson?.audio_url && typeof clipJson.audio_url === 'string' && clipJson.audio_url.startsWith('http')) {
+        const audioRes = await fetch(clipJson.audio_url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          },
+        });
+        if (audioRes.ok) {
+          const buf = Buffer.from(await audioRes.arrayBuffer());
+          if (buf.length > 5000) {
+            fs.writeFileSync(decryptedPath, buf);
+            return decryptedPath;
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`Studio API direct audio fetch failed for ${trackId}:`, e.message);
+  }
+
   // 1. Fetch decryption rights from the Suno rights service (with usesuno Origin & Referer)
   let rights: any = null;
   const rightsEndpoints = [
@@ -135,6 +164,7 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
     `https://cdn1.suno.ai/${trackId}.m4a`,
     `https://cdn2.suno.ai/${trackId}.mp3`,
     `https://cdn2.suno.ai/${trackId}.mp4`,
+    `https://audiopipe.suno.ai/v1/change_target?item_id=${trackId}`,
   ];
 
   for (const cdnUrl of candidateUrls) {
@@ -617,9 +647,9 @@ async function fetchTrackData(trackId: string): Promise<any> {
     ? Math.round(clipData.duration)
     : 180;
 
-  const audioUrl = clipData.audio_url && !clipData.audio_url.includes('forbidden')
+  const audioUrl = clipData.audio_url && !clipData.audio_url.includes('forbidden') && clipData.audio_url.startsWith('http')
     ? clipData.audio_url
-    : `/api/suno/stream/${trackId}.mp3`;
+    : `https://cdn1.suno.ai/${trackId}.mp3`;
 
   return {
     id: trackId,

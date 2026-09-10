@@ -246,7 +246,9 @@ export async function convertTrackToFormat(
   }
 
   // Fallback to client-side direct fetch if backend endpoint returns non-OK or connection error
-  const fallbackUrl = track.audio_url || `https://cdn1.suno.ai/${track.id}.mp3`;
+  const fallbackUrl = (track.audio_url && track.audio_url.startsWith('http'))
+    ? track.audio_url
+    : `https://cdn1.suno.ai/${track.id}.mp3`;
   try {
     onProgress?.(50);
     const buffer = await fetchAudioData(fallbackUrl, onProgress);
