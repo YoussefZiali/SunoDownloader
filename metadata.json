@@ -1,0 +1,6 @@
+{
+  "name": "Suno Song",
+  "description": "A dedicated Suno song player and lossless audio downloader with interactive waveform playback, share link resolution, and high-fidelity audio exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
