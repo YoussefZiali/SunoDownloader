@@ -220,37 +220,6 @@ export async function convertTrackToFormat(
 
   onProgress?.(30);
 
-  let res = await fetch(downloadUrl);
-  if (!res.ok) {
-    // Resilient fallback to audio stream or proxy audio
-    const streamFallback = `/api/suno/stream/${track.id}.mp3`;
-    try {
-      const fallbackRes = await fetch(streamFallback);
-      if (fallbackRes.ok) {
-        res = fallbackRes;
-      } else {
-        const proxyFallback = `/api/suno/proxy-audio?url=${encodeURIComponent(`https://cdn1.suno.ai/${track.id}.mp4`)}`;
-        const proxyRes = await fetch(proxyFallback);
-        if (proxyRes.ok) {
-          res = proxyRes;
-        }
-      }
-    } catch {
-      // ignore fallback error and report original
-    }
-  }
-
-  if (!res.ok) {
-    let message = `Audio processing error: HTTP ${res.status}`;
-    try {
-      const errJson = await res.json();
-      if (errJson?.error) message = errJson.error;
-    } catch {
-      // ignore
-    }
-    throw new Error(message);
-  }
-
   const mimeMap: Record<string, string> = {
     mp3: 'audio/mpeg',
     wav: 'audio/wav',
@@ -258,6 +227,49 @@ export async function convertTrackToFormat(
     aac: 'audio/mp4',
     ogg: 'audio/ogg',
   };
+
+  let res: Response | null = null;
+  try {
+    res = await fetch(downloadUrl);
+  } catch {
+    res = null;
+  }
+
+  if (res && res.ok) {
+    onProgress?.(70);
+    const rawBlob = await res.blob();
+    const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
+    onProgress?.(100);
+    return {
+      blob,
+      fileName,
+    };
+  }
+
+  // Direct Browser CDN Fetch Fallback if backend server endpoint is unreachable or 500
+  const directAudioUrl = (track.audio_url && track.audio_url.startsWith('http'))
+    ? track.audio_url
+    : `https://cdn1.suno.ai/${track.id}.mp3`;
+
+  try {
+    onProgress?.(50);
+    const arrayBuffer = await fetchAudioData(directAudioUrl, onProgress);
+    const blob = new Blob([arrayBuffer], { type: mimeMap[format] || 'audio/mpeg' });
+    onProgress?.(100);
+    return {
+      blob,
+      fileName,
+    };
+  } catch (fallbackErr: any) {
+    let message = `Audio processing error: ${res ? `HTTP ${res.status}` : fallbackErr.message || 'Direct download failed'}`;
+    if (res) {
+      try {
+        const errJson = await res.json();
+        if (errJson?.error) message = errJson.error;
+      } catch {}
+    }
+    throw new Error(message);
+  }
 
   onProgress?.(70);
   const rawBlob = await res.blob();

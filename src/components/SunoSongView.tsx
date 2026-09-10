@@ -107,7 +107,9 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
-      const playSrc = currentTrack.id ? `/api/suno/stream/${currentTrack.id}.mp3` : currentTrack.audio_url;
+      const playSrc = (currentTrack.audio_url && currentTrack.audio_url.startsWith('http'))
+        ? currentTrack.audio_url
+        : (currentTrack.id ? `/api/suno/stream/${currentTrack.id}.mp3` : `https://cdn1.suno.ai/${currentTrack.id}.mp3`);
       audioRef.current.src = playSrc;
       audioRef.current.load();
     }

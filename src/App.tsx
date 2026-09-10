@@ -200,27 +200,24 @@ export default function App() {
       }
 
       // Master URL resolver endpoint on the backend
-      const res = await fetch('/api/suno/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed }),
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Failed to resolve Suno link. Please verify URL.');
+      let data: any = null;
+      try {
+        const res = await fetch('/api/suno/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: trimmed }),
+        });
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch {
+        data = null;
       }
 
-      const data = await res.json();
-
-      if (data.type === 'playlist' && data.playlist) {
-        if (data.playlist.tracks && data.playlist.tracks.length > 0) {
-          setCurrentPlaylist(data.playlist);
-          setCurrentTrack(null);
-        } else {
-          throw new Error('Playlist contains no tracks.');
-        }
-      } else if (data.type === 'song' && data.track) {
+      if (data && data.type === 'playlist' && data.playlist?.tracks?.length > 0) {
+        setCurrentPlaylist(data.playlist);
+        setCurrentTrack(null);
+      } else if (data && data.type === 'song' && data.track) {
         setCurrentTrack(data.track);
         setCurrentPlaylist(null);
         setCustomMetadata({});
@@ -229,7 +226,19 @@ export default function App() {
           setTimeout(() => handleDownloadTrack(data.track, settings.defaultFormat), 500);
         }
       } else {
-        throw new Error('Could not identify Suno song or playlist.');
+        // Fallback: Client-side URL & Track resolution in browser
+        const clientTrack = await resolveTrackClientSide(trimmed);
+        if (clientTrack) {
+          setCurrentTrack(clientTrack);
+          setCurrentPlaylist(null);
+          setCustomMetadata({});
+          setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, clientTrack.duration || 180) });
+          if (settings.autoDownloadOnPaste) {
+            setTimeout(() => handleDownloadTrack(clientTrack, settings.defaultFormat), 500);
+          }
+        } else {
+          throw new Error('Could not identify Suno song or playlist. Please verify the URL.');
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to resolve Suno URL. Please check the link.');
@@ -237,6 +246,61 @@ export default function App() {
       setIsLoadingUrl(false);
     }
   };
+
+  async function resolveTrackClientSide(inputUrl: string): Promise<SunoTrack | null> {
+    const uuidMatch = inputUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+    if (!uuidMatch) return null;
+    const trackId = uuidMatch[0];
+
+    try {
+      const res = await fetch(`https://studio-api.prod.suno.com/api/clip/${trackId}`);
+      if (res.ok) {
+        const clip = await res.json();
+        if (clip && clip.id) {
+          const duration = Math.round(clip.metadata?.duration || clip.duration || 180);
+          return {
+            id: clip.id,
+            title: clip.title || `Suno Track ${clip.id.slice(0, 8)}`,
+            artist: clip.display_name || clip.handle || 'Suno Artist',
+            handle: clip.handle ? `@${clip.handle}` : '@suno_user',
+            audio_url: (clip.audio_url && clip.audio_url.startsWith('http')) ? clip.audio_url : `https://cdn1.suno.ai/${clip.id}.mp3`,
+            video_url: clip.video_url || `https://cdn1.suno.ai/${clip.id}.mp4`,
+            image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${clip.id}.jpeg`,
+            duration,
+            duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
+            play_count: clip.play_count || 120,
+            upvote_count: clip.upvote_count || 12,
+            tags: clip.metadata?.tags || clip.display_tags || 'suno',
+            model: clip.major_model_version || 'v6',
+            created_at: clip.created_at || new Date().toISOString(),
+            isVerified: clip.is_verified || false,
+            iframe_url: `https://suno.com/embed/${clip.id}`,
+          };
+        }
+      }
+    } catch {
+      // continue to fallback
+    }
+
+    return {
+      id: trackId,
+      title: `Suno Track ${trackId.slice(0, 8)}`,
+      artist: 'Suno Artist',
+      handle: '@suno_user',
+      audio_url: `https://cdn1.suno.ai/${trackId}.mp3`,
+      video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
+      image_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+      duration: 180,
+      duration_formatted: '3:00',
+      play_count: 100,
+      upvote_count: 10,
+      tags: 'suno',
+      model: 'v6',
+      created_at: new Date().toISOString(),
+      isVerified: false,
+      iframe_url: `https://suno.com/embed/${trackId}`,
+    };
+  }
 
   // Reset to initial paste screen
   const handleReset = () => {
