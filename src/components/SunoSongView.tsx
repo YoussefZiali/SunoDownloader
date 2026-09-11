@@ -107,10 +107,7 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
-      const origSrc = (currentTrack.audio_url && currentTrack.audio_url.startsWith('http'))
-        ? currentTrack.audio_url
-        : `https://cdn1.suno.ai/${currentTrack.id}.mp3`;
-      const playSrc = `/api/suno/proxy-audio?url=${encodeURIComponent(origSrc)}`;
+      const playSrc = currentTrack.id ? `/api/suno/stream/${currentTrack.id}.mp3` : currentTrack.audio_url;
       audioRef.current.src = playSrc;
       audioRef.current.load();
     }
@@ -148,32 +145,35 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
     };
 
     const onError = () => {
-      console.warn('Audio playback error triggered, checking client CORS proxy fallback');
-      const origSrc = (currentTrack?.audio_url && currentTrack.audio_url.startsWith('http'))
-        ? currentTrack.audio_url
-        : `https://cdn1.suno.ai/${currentTrack?.id}.mp3`;
-
-      if (audio.src && !audio.src.includes('allorigins.win')) {
-        audio.src = `https://api.allorigins.win/raw?url=${encodeURIComponent(origSrc)}`;
+      console.warn('Audio playback error triggered, checking stream fallback');
+      if (currentTrack?.id && audio.src && audio.src.includes('/api/suno/stream/')) {
+        console.log('Falling back to proxy audio');
+        audio.src = `/api/suno/proxy-audio?url=${encodeURIComponent(`https://cdn1.suno.ai/${currentTrack.id}.mp4`)}`;
         audio.load();
         audio.play().then(() => {
           setIsPlaying(true);
           setIsBuffering(false);
         }).catch(() => {
-          if (!audio.src.includes('codetabs.com')) {
-            audio.src = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(origSrc)}`;
-            audio.load();
-            audio.play().catch(() => {
-              setIsPlaying(false);
-              setIsBuffering(false);
-              setPlaybackError('Playback unavailable for this track.');
-            });
-          }
+          setIsPlaying(false);
+          setIsBuffering(false);
+          setPlaybackError('Stream unavailable. Please verify network.');
+        });
+      } else if (audio.src && audio.src.includes('/api/suno/proxy-audio') && currentTrack?.audio_url) {
+        console.log('Falling back to direct stream URL');
+        audio.src = currentTrack.audio_url;
+        audio.load();
+        audio.play().then(() => {
+          setIsPlaying(true);
+          setIsBuffering(false);
+        }).catch(() => {
+          setIsPlaying(false);
+          setIsBuffering(false);
+          setPlaybackError('Stream unavailable. Please verify network or try another song.');
         });
       } else {
         setIsPlaying(false);
         setIsBuffering(false);
-        setPlaybackError('Playback unavailable. Click play to retry.');
+        setPlaybackError('Stream error. Click play to retry.');
       }
     };
 

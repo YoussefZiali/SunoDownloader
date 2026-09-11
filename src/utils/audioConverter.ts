@@ -1,8 +1,13 @@
 import JSZip from 'jszip';
 import { AudioFormat, SunoTrack, UserSettings } from '../types';
 
-// Helper to format track filename based on settings pattern
-export function formatFileName(track: SunoTrack, format: string, pattern: string): string {
+// Helper to format track filename based on settings pattern, with duplicate index support
+export function formatFileName(
+  track: SunoTrack,
+  format: string,
+  pattern: string,
+  duplicateIndex?: number
+): string {
   const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
   const title = sanitize(track.title || 'Untitled');
   const artist = sanitize(track.artist || 'Suno');
@@ -17,6 +22,11 @@ export function formatFileName(track: SunoTrack, format: string, pattern: string
 
   if (!base) {
     base = `${artist} - ${title}`;
+  }
+
+  // If this is a duplicate song with identical name in playlist/batch, append number e.g. (2)
+  if (duplicateIndex && duplicateIndex > 1) {
+    base = `${base} (${duplicateIndex})`;
   }
 
   return `${base}.${format}`;
@@ -133,27 +143,13 @@ export async function fetchAudioData(url: string, onProgress?: (p: number) => vo
     return merged.buffer;
   };
 
-  const proxyCandidates = [
-    url,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-    `/api/suno/proxy-audio?url=${encodeURIComponent(url)}`,
-  ];
-
-  let lastError: any = null;
-  for (const candidateUrl of proxyCandidates) {
-    try {
-      const buf = await tryFetch(candidateUrl);
-      if (buf && buf.byteLength > 5000) {
-        return buf;
-      }
-    } catch (e: any) {
-      lastError = e;
-    }
+  try {
+    return await tryFetch(url);
+  } catch (err) {
+    // Retry via backend proxy
+    const proxyUrl = `/api/suno/proxy-audio?url=${encodeURIComponent(url)}`;
+    return await tryFetch(proxyUrl);
   }
-
-  throw new Error(`Failed to fetch audio stream: ${lastError?.message || 'Network blocked'}`);
 }
 
 // Helper to format short duration for filenames
@@ -180,6 +176,8 @@ export async function convertTrackToFormat(
       genre?: string;
     };
     normalize?: boolean;
+    duplicateIndex?: number;
+    customFileName?: string;
   }
 ): Promise<{ blob: Blob; fileName: string }> {
   const ext = format === 'aac' ? 'm4a' : format;
@@ -189,7 +187,10 @@ export async function convertTrackToFormat(
     artist: options?.customMetadata?.artist?.trim() || track.artist,
   };
 
-  let baseFileName = formatFileName(effectiveTrack, ext, settings.namingPattern);
+  let baseFileName = options?.customFileName
+    ? options.customFileName
+    : formatFileName(effectiveTrack, ext, settings.namingPattern, options?.duplicateIndex);
+
   if (options?.startTime != null && options?.endTime != null && !isNaN(options.startTime) && !isNaN(options.endTime)) {
     const rawNoExt = baseFileName.slice(0, -(ext.length + 1));
     baseFileName = `${rawNoExt} [Clip ${formatSecondsShort(options.startTime)}-${formatSecondsShort(options.endTime)}].${ext}`;
@@ -211,6 +212,9 @@ export async function convertTrackToFormat(
     cover: track.image_url || '',
   });
 
+  if (options?.duplicateIndex && options.duplicateIndex > 1) {
+    queryParams.set('duplicateIndex', String(options.duplicateIndex));
+  }
   if (options?.startTime != null && !isNaN(options.startTime)) {
     queryParams.set('startTime', String(options.startTime));
   }
@@ -234,6 +238,18 @@ export async function convertTrackToFormat(
 
   onProgress?.(30);
 
+  const res = await fetch(downloadUrl);
+  if (!res.ok) {
+    let message = `Audio processing error: HTTP ${res.status}`;
+    try {
+      const errJson = await res.json();
+      if (errJson?.error) message = errJson.error;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
   const mimeMap: Record<string, string> = {
     mp3: 'audio/mpeg',
     wav: 'audio/wav',
@@ -242,53 +258,30 @@ export async function convertTrackToFormat(
     ogg: 'audio/ogg',
   };
 
-  let res: Response | null = null;
-  try {
-    res = await fetch(downloadUrl);
-  } catch {
-    res = null;
-  }
+  onProgress?.(70);
+  const rawBlob = await res.blob();
+  const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
+  onProgress?.(100);
 
-  if (res && res.ok) {
-    onProgress?.(70);
-    const rawBlob = await res.blob();
-    const blob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: mimeMap[format] || 'audio/mpeg' });
-    onProgress?.(100);
-    return {
-      blob,
-      fileName,
-    };
-  }
-
-  const directAudioUrl = (track.audio_url && track.audio_url.startsWith('http'))
-    ? track.audio_url
-    : `https://cdn1.suno.ai/${track.id}.mp3`;
-
-  try {
-    onProgress?.(50);
-    const arrayBuffer = await fetchAudioData(directAudioUrl, onProgress);
-    const blob = new Blob([arrayBuffer], { type: mimeMap[format] || 'audio/mpeg' });
-    onProgress?.(100);
-    return {
-      blob,
-      fileName,
-    };
-  } catch (err: any) {
-    throw new Error(`Download failed: ${err.message || 'Direct audio download unavailable'}`);
-  }
+  return {
+    blob,
+    fileName,
+  };
 }
 
 // Direct browser streaming download for single files - skips JS memory buffering
 export function downloadTrackDirectly(
   track: SunoTrack,
   format: AudioFormat,
-  settings: UserSettings
+  settings: UserSettings,
+  duplicateIndex?: number
 ): void {
   const ext = format === 'aac' ? 'm4a' : format;
   const bitrate = settings.mp3Bitrate || '320kbps';
   const bitDepth = settings.wavBitDepth || '24-bit';
-  const fileName = formatFileName(track, ext, settings.namingPattern);
-  const downloadUrl = `/api/suno/download?id=${encodeURIComponent(track.id)}&format=${format === 'aac' ? 'm4a' : format}&bitrate=${encodeURIComponent(bitrate)}&bitDepth=${encodeURIComponent(bitDepth)}&title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}&cover=${encodeURIComponent(track.image_url || '')}`;
+  const fileName = formatFileName(track, ext, settings.namingPattern, duplicateIndex);
+  const dupParam = duplicateIndex && duplicateIndex > 1 ? `&duplicateIndex=${duplicateIndex}` : '';
+  const downloadUrl = `/api/suno/download?id=${encodeURIComponent(track.id)}&format=${format === 'aac' ? 'm4a' : format}&bitrate=${encodeURIComponent(bitrate)}&bitDepth=${encodeURIComponent(bitDepth)}&title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}&cover=${encodeURIComponent(track.image_url || '')}${dupParam}`;
 
   const a = document.createElement('a');
   a.href = downloadUrl;
@@ -301,14 +294,21 @@ export function downloadTrackDirectly(
 }
 
 // Generate synced or plain lyrics file
-export function generateLyricsContent(track: SunoTrack, format: 'lrc' | 'txt'): { content: string; fileName: string } {
+export function generateLyricsContent(
+  track: SunoTrack,
+  format: 'lrc' | 'txt',
+  duplicateIndex?: number
+): { content: string; fileName: string } {
   const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
-  const baseName = `${sanitize(track.artist)} - ${sanitize(track.title)}`;
+  let baseName = `${sanitize(track.artist)} - ${sanitize(track.title)}`;
+  if (duplicateIndex && duplicateIndex > 1) {
+    baseName = `${baseName} (${duplicateIndex})`;
+  }
   const ext = format === 'lrc' ? 'lrc' : 'txt';
 
   let text = '';
   if (format === 'lrc') {
-    text += `[ti:${track.title}]\n`;
+    text += `[ti:${track.title}${duplicateIndex && duplicateIndex > 1 ? ` (${duplicateIndex})` : ''}]\n`;
     text += `[ar:${track.artist}]\n`;
     text += `[al:Suno AI Collection]\n`;
     text += `[by:Suno Downloader]\n\n`;
@@ -326,7 +326,7 @@ export function generateLyricsContent(track: SunoTrack, format: 'lrc' | 'txt'): 
       }
     }
   } else {
-    text += `Title: ${track.title}\n`;
+    text += `Title: ${track.title}${duplicateIndex && duplicateIndex > 1 ? ` (${duplicateIndex})` : ''}\n`;
     text += `Artist: ${track.artist} (${track.handle})\n`;
     text += `Duration: ${track.duration_formatted}\n`;
     text += `Style / Tags: ${track.tags || 'N/A'}\n`;
@@ -341,7 +341,7 @@ export function generateLyricsContent(track: SunoTrack, format: 'lrc' | 'txt'): 
   };
 }
 
-// Batch ZIP Creator
+// Batch ZIP Creator with collision prevention (ensures duplicate song names are numbered e.g. "Song (2).mp3" and all songs download)
 export async function createBatchZip(
   files: { track: SunoTrack; blob: Blob; fileName: string }[],
   settings: UserSettings,
@@ -349,25 +349,49 @@ export async function createBatchZip(
 ): Promise<Blob> {
   const zip = new JSZip();
   const total = files.length;
+  // Track used filenames per folder to prevent any ZIP collisions/overwriting
+  const usedFolderFileNames = new Map<string, Set<string>>();
 
   for (let i = 0; i < total; i++) {
     const item = files[i];
     const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
     
+    let folderKey = 'root';
     let targetFolder: JSZip = zip;
     if (settings.zipStructure === 'artist_folder') {
       const artistName = sanitize(item.track.artist || 'Unknown Artist');
+      folderKey = `artist:${artistName.toLowerCase()}`;
       targetFolder = zip.folder(artistName) || zip;
     } else if (settings.zipStructure === 'format_folder') {
       const ext = item.fileName.split('.').pop()?.toUpperCase() || 'AUDIO';
+      folderKey = `format:${ext.toLowerCase()}`;
       targetFolder = zip.folder(ext) || zip;
     }
 
-    targetFolder.file(item.fileName, item.blob);
+    if (!usedFolderFileNames.has(folderKey)) {
+      usedFolderFileNames.set(folderKey, new Set<string>());
+    }
+    const usedNames = usedFolderFileNames.get(folderKey)!;
 
-    // If lyrics enabled, add lyrics file
+    // Check if filename already exists in this folder, and append (2), (3), etc. if needed
+    let finalFileName = item.fileName;
+    const lastDotIndex = item.fileName.lastIndexOf('.');
+    const baseName = lastDotIndex !== -1 ? item.fileName.slice(0, lastDotIndex) : item.fileName;
+    const fileExt = lastDotIndex !== -1 ? item.fileName.slice(lastDotIndex) : '';
+
+    let counter = 2;
+    while (usedNames.has(finalFileName.toLowerCase())) {
+      finalFileName = `${baseName} (${counter})${fileExt}`;
+      counter++;
+    }
+    usedNames.add(finalFileName.toLowerCase());
+
+    targetFolder.file(finalFileName, item.blob);
+
+    // If lyrics enabled, add lyrics file with matching unique numbering
     if (settings.downloadLyrics) {
-      const lyrics = generateLyricsContent(item.track, settings.lyricsFormat);
+      const dupIdx = counter > 2 ? counter - 1 : undefined;
+      const lyrics = generateLyricsContent(item.track, settings.lyricsFormat, dupIdx);
       targetFolder.file(lyrics.fileName, lyrics.content);
     }
 

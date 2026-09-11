@@ -199,27 +199,28 @@ export default function App() {
         return;
       }
 
-      // 1. Try backend API resolution first
-      let data: any = null;
-      try {
-        const res = await fetch('/api/suno/resolve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: trimmed }),
-        });
-        if (res.ok) {
-          data = await res.json();
-        }
-      } catch {
-        data = null;
+      // Master URL resolver endpoint on the backend
+      const res = await fetch('/api/suno/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Failed to resolve Suno link. Please verify URL.');
       }
 
-      if (data && data.type === 'playlist' && data.playlist?.tracks?.length > 0) {
-        setCurrentPlaylist(data.playlist);
-        setCurrentTrack(null);
-        setIsLoadingUrl(false);
-        return;
-      } else if (data && data.type === 'song' && data.track) {
+      const data = await res.json();
+
+      if (data.type === 'playlist' && data.playlist) {
+        if (data.playlist.tracks && data.playlist.tracks.length > 0) {
+          setCurrentPlaylist(data.playlist);
+          setCurrentTrack(null);
+        } else {
+          throw new Error('Playlist contains no tracks.');
+        }
+      } else if (data.type === 'song' && data.track) {
         setCurrentTrack(data.track);
         setCurrentPlaylist(null);
         setCustomMetadata({});
@@ -227,171 +228,15 @@ export default function App() {
         if (settings.autoDownloadOnPaste) {
           setTimeout(() => handleDownloadTrack(data.track, settings.defaultFormat), 500);
         }
-        setIsLoadingUrl(false);
-        return;
+      } else {
+        throw new Error('Could not identify Suno song or playlist.');
       }
-
-      // 2. Client-side fallback if backend API is offline or serverless error
-      const clientPlaylist = await resolvePlaylistClientSide(trimmed);
-      if (clientPlaylist && clientPlaylist.tracks.length > 0) {
-        setCurrentPlaylist(clientPlaylist);
-        setCurrentTrack(null);
-        setIsLoadingUrl(false);
-        return;
-      }
-
-      const clientTrack = await resolveTrackClientSide(trimmed);
-      if (clientTrack) {
-        setCurrentTrack(clientTrack);
-        setCurrentPlaylist(null);
-        setCustomMetadata({});
-        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, clientTrack.duration || 180) });
-        if (settings.autoDownloadOnPaste) {
-          setTimeout(() => handleDownloadTrack(clientTrack, settings.defaultFormat), 500);
-        }
-        setIsLoadingUrl(false);
-        return;
-      }
-
-      throw new Error('Could not identify Suno song or playlist. Please verify the URL.');
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to resolve Suno URL. Please check the link.');
     } finally {
       setIsLoadingUrl(false);
     }
   };
-
-  async function resolvePlaylistClientSide(inputUrl: string): Promise<SunoPlaylist | null> {
-    const plMatch = inputUrl.match(/suno\.(?:com|ai)\/playlist\/([a-zA-Z0-9_-]+)/i);
-    const playlistId = plMatch ? plMatch[1] : null;
-    if (!playlistId) return null;
-
-    const targetApi = `https://studio-api.prod.suno.com/api/playlist/${playlistId}`;
-    const proxyEndpoints = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetApi)}`,
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetApi)}`,
-      `https://corsproxy.io/?${encodeURIComponent(targetApi)}`,
-    ];
-
-    for (const ep of proxyEndpoints) {
-      try {
-        const res = await fetch(ep);
-        if (res.ok) {
-          const rawData = await res.json();
-          const rawClips = rawData.playlist_clips || rawData.clips || [];
-          if (rawClips.length > 0) {
-            const tracks = rawClips.map((item: any) => {
-              const clip = item.clip || item;
-              const trackId = clip.id;
-              const duration = Math.round(clip.metadata?.duration || clip.duration || 180);
-              return {
-                id: trackId,
-                title: clip.title || `Suno Track ${trackId?.slice(0, 8)}`,
-                artist: clip.display_name || clip.handle || 'Suno Artist',
-                handle: clip.handle ? `@${clip.handle}` : '@suno_user',
-                audio_url: clip.audio_url || `https://cdn1.suno.ai/${trackId}.mp3`,
-                video_url: clip.video_url || `https://cdn1.suno.ai/${trackId}.mp4`,
-                image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
-                duration,
-                duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
-                play_count: clip.play_count || 0,
-                upvote_count: clip.upvote_count || 0,
-                tags: clip.metadata?.tags || clip.display_tags || '',
-                model: clip.major_model_version || 'v6',
-                created_at: clip.created_at || new Date().toISOString(),
-                iframe_url: `https://suno.com/embed/${trackId}`,
-              };
-            });
-
-            return {
-              id: playlistId,
-              title: rawData.name || rawData.title || 'Suno Playlist',
-              description: rawData.description || '',
-              cover_url: rawData.image_url || tracks[0]?.image_url || '',
-              tracks,
-            };
-          }
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  async function resolveTrackClientSide(inputUrl: string): Promise<SunoTrack | null> {
-    const uuidMatch = inputUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-    if (!uuidMatch) return null;
-    const trackId = uuidMatch[0];
-
-    const targetApi = `https://studio-api.prod.suno.com/api/clip/${trackId}`;
-    const proxyEndpoints = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetApi)}`,
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetApi)}`,
-      `https://corsproxy.io/?${encodeURIComponent(targetApi)}`,
-      targetApi,
-    ];
-
-    let clip: any = null;
-    for (const ep of proxyEndpoints) {
-      try {
-        const res = await fetch(ep);
-        if (res.ok) {
-          const resText = await res.text();
-          try {
-            const parsed = JSON.parse(resText);
-            if (parsed && (parsed.id || parsed.title)) {
-              clip = parsed;
-              break;
-            }
-          } catch {
-            // ignore non-json
-          }
-        }
-      } catch {
-        // try next endpoint
-      }
-    }
-
-    if (clip && clip.id) {
-      const duration = Math.round(clip.metadata?.duration || clip.duration || 180);
-      return {
-        id: clip.id,
-        title: clip.title || `Suno Track ${clip.id.slice(0, 8)}`,
-        artist: clip.display_name || clip.handle || 'Suno Artist',
-        handle: clip.handle ? `@${clip.handle}` : '@suno_user',
-        audio_url: (clip.audio_url && clip.audio_url.startsWith('http')) ? clip.audio_url : `https://cdn1.suno.ai/${clip.id}.mp3`,
-        video_url: clip.video_url || `https://cdn1.suno.ai/${clip.id}.mp4`,
-        image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${clip.id}.jpeg`,
-        duration,
-        duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
-        play_count: clip.play_count || 120,
-        upvote_count: clip.upvote_count || 12,
-        tags: clip.metadata?.tags || clip.display_tags || 'suno',
-        model: clip.major_model_version || 'v6',
-        created_at: clip.created_at || new Date().toISOString(),
-        isVerified: clip.is_verified || false,
-        iframe_url: `https://suno.com/embed/${clip.id}`,
-      };
-    }
-
-    return {
-      id: trackId,
-      title: `Suno Track ${trackId.slice(0, 8)}`,
-      artist: 'Suno Artist',
-      handle: '@suno_user',
-      audio_url: `https://cdn1.suno.ai/${trackId}.mp3`,
-      video_url: `https://cdn1.suno.ai/${trackId}.mp4`,
-      image_url: `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
-      duration: 180,
-      duration_formatted: '3:00',
-      play_count: 100,
-      upvote_count: 10,
-      tags: 'suno',
-      model: 'v6',
-      created_at: new Date().toISOString(),
-      isVerified: false,
-      iframe_url: `https://suno.com/embed/${trackId}`,
-    };
-  }
 
   // Reset to initial paste screen
   const handleReset = () => {
