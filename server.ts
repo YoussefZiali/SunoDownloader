@@ -90,6 +90,11 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
         throw new Error(`Failed to fetch encrypted audio stream: HTTP ${encRes.status}`);
       }
 
+      const ct = (encRes.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('text/html') || ct.includes('application/json')) {
+        throw new Error(`CloudFront returned ${ct} instead of audio stream`);
+      }
+
       const encBuffer = Buffer.from(await encRes.arrayBuffer());
 
       // Decrypt audio using AES-128-CTR
@@ -97,7 +102,7 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
       const decipher = crypto.createDecipheriv(algo, contentKey, contentIv);
       const decryptedBuffer = Buffer.concat([decipher.update(encBuffer), decipher.final()]);
 
-      if (decryptedBuffer.length > 5000) {
+      if (decryptedBuffer.length > 50000 && !decryptedBuffer.subarray(0, 50).toString().includes('<html')) {
         fs.writeFileSync(decryptedPath, decryptedBuffer);
         return decryptedPath;
       }
@@ -120,8 +125,12 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
         },
       });
       if (directRes.ok) {
+        const ct = (directRes.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('text/html') || ct.includes('application/json')) {
+          continue;
+        }
         const buf = Buffer.from(await directRes.arrayBuffer());
-        if (buf.length > 5000) {
+        if (buf.length > 50000 && !buf.subarray(0, 50).toString().includes('<html')) {
           fs.writeFileSync(decryptedPath, buf);
           return decryptedPath;
         }
