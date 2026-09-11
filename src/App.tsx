@@ -410,6 +410,7 @@ export default function App() {
       endTime?: number;
       customMetadata?: TrackMetadataCustomization;
       normalize?: boolean;
+      duplicateIndex?: number;
     }
   ) => {
     setActiveDownloadingFormat(format);
@@ -421,6 +422,7 @@ export default function App() {
         endTime: options?.endTime,
         customMetadata: options?.customMetadata || customMetadata,
         normalize: options?.normalize ?? settings.volumeNormalization,
+        duplicateIndex: options?.duplicateIndex,
       };
 
       const result = await convertTrackToFormat(track, format, settings, (percent) => {
@@ -432,9 +434,13 @@ export default function App() {
 
       // Record to history
       const wasClipped = mergedOptions.startTime != null && mergedOptions.endTime != null;
+      const historyTitle = options?.duplicateIndex && options.duplicateIndex > 1
+        ? `${mergedOptions.customMetadata?.title || track.title} (${options.duplicateIndex})`
+        : (mergedOptions.customMetadata?.title || track.title);
+
       addHistoryRecord({
         trackId: track.id,
-        trackTitle: mergedOptions.customMetadata?.title || track.title,
+        trackTitle: historyTitle,
         artist: mergedOptions.customMetadata?.artist || track.artist,
         imageUrl: track.image_url,
         format,
@@ -541,12 +547,21 @@ export default function App() {
       const totalOps = tracks.length * chosenFormats.length;
       let completedOps = 0;
 
+      // Track occurrences of identical artist + title in the batch to automatically number duplicates (e.g. Song (2))
+      const nameOccurrences = new Map<string, number>();
+
       for (let i = 0; i < tracks.length; i++) {
         if (batchAbortRef.current) {
           throw new Error('Batch download cancelled.');
         }
 
         const t = tracks[i];
+        const trackKey = `${(t.artist || 'Suno').trim().toLowerCase()}:::${(t.title || 'Untitled').trim().toLowerCase()}`;
+        const duplicateIndex = (nameOccurrences.get(trackKey) || 0) + 1;
+        nameOccurrences.set(trackKey, duplicateIndex);
+
+        const displayTitle = duplicateIndex > 1 ? `${t.title} (${duplicateIndex})` : t.title;
+
         for (const fmt of chosenFormats) {
           if (batchAbortRef.current) break;
 
@@ -560,7 +575,7 @@ export default function App() {
             isActive: true,
             totalTracks: tracks.length,
             completedTracks: completedOps,
-            currentTrackTitle: t.title,
+            currentTrackTitle: displayTitle,
             currentTrackArtist: t.artist,
             currentTrackId: t.id,
             percent: currentPct,
@@ -570,6 +585,7 @@ export default function App() {
 
           const conv = await convertTrackToFormat(t, fmt, settings, undefined, {
             normalize: settings.volumeNormalization,
+            duplicateIndex,
           });
           convertedFiles.push({ track: t, blob: conv.blob, fileName: conv.fileName });
           completedOps++;
@@ -577,7 +593,7 @@ export default function App() {
           // Record each batch item to history
           addHistoryRecord({
             trackId: t.id,
-            trackTitle: t.title,
+            trackTitle: displayTitle,
             artist: t.artist,
             imageUrl: t.image_url,
             format: fmt,

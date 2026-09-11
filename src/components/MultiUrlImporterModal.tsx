@@ -6,7 +6,7 @@ interface MultiUrlImporterModalProps {
   isOpen: boolean;
   onClose: () => void;
   onDownloadBatchZip: (tracks: SunoTrack[], format: AudioFormat) => Promise<void>;
-  onDownloadTrack: (track: SunoTrack, format: AudioFormat) => Promise<void>;
+  onDownloadTrack: (track: SunoTrack, format: AudioFormat, options?: any) => Promise<void>;
   settings: UserSettings;
   onSelectTrackForPlayer?: (track: SunoTrack) => void;
 }
@@ -109,10 +109,16 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
     if (queuedTracks.length === 0) return;
     setIsBatchDownloading(true);
     try {
+      const nameOccurrences = new Map<string, number>();
       for (let i = 0; i < queuedTracks.length; i++) {
         const track = queuedTracks[i];
-        setDownloadStep(`Downloading ${i + 1}/${queuedTracks.length}: ${track.title}...`);
-        await onDownloadTrack(track, selectedFormat);
+        const trackKey = `${(track.artist || 'Suno').trim().toLowerCase()}:::${(track.title || 'Untitled').trim().toLowerCase()}`;
+        const duplicateIndex = (nameOccurrences.get(trackKey) || 0) + 1;
+        nameOccurrences.set(trackKey, duplicateIndex);
+
+        const dupSuffix = duplicateIndex > 1 ? ` (${duplicateIndex})` : '';
+        setDownloadStep(`Downloading ${i + 1}/${queuedTracks.length}: ${track.title}${dupSuffix}...`);
+        await onDownloadTrack(track, selectedFormat, { duplicateIndex });
         await new Promise((r) => setTimeout(r, 600));
       }
     } catch (err: any) {
