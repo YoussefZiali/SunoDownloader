@@ -193,12 +193,18 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
           });
 
           if (encRes.ok) {
+            const ct = (encRes.headers.get('content-type') || '').toLowerCase();
+            if (ct.includes('text/html') || ct.includes('application/json')) {
+              continue;
+            }
+
             const encBuffer = Buffer.from(await encRes.arrayBuffer());
             const algo = contentKey.length === 32 ? 'aes-256-ctr' : 'aes-128-ctr';
             const decipher = crypto.createDecipheriv(algo, contentKey, contentIv);
             const decryptedBuffer = Buffer.concat([decipher.update(encBuffer), decipher.final()]);
 
-            if (decryptedBuffer.length > 5000) {
+            // Ensure the file is large enough to be an audio track, and doesn't just start with HTML tags
+            if (decryptedBuffer.length > 50000 && !decryptedBuffer.subarray(0, 50).toString().includes('<html')) {
               fs.writeFileSync(decryptedPath, decryptedBuffer);
               return decryptedPath;
             }
@@ -240,8 +246,14 @@ async function getDecryptedAudioPath(trackId: string, audioUrl?: string): Promis
         },
       });
       if (directRes.ok) {
+        const ct = (directRes.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('text/html') || ct.includes('application/json')) {
+          continue;
+        }
+        
         const buf = Buffer.from(await directRes.arrayBuffer());
-        if (buf.length > 5000) {
+        // Verify minimum valid audio file size (e.g., 50KB instead of 5KB) and check for common HTML signatures just in case
+        if (buf.length > 50000 && !buf.subarray(0, 50).toString().includes('<html')) {
           fs.writeFileSync(decryptedPath, buf);
           return decryptedPath;
         }
@@ -288,14 +300,14 @@ async function getCoverImagePath(trackId: string, coverUrl?: string): Promise<st
 }
 
 // Transcode track with ffmpeg if available, otherwise return decrypted audio path cleanly
-async function transcodeTrack(
+export async function transcodeTrack(
   trackId: string,
-  format: 'mp3' | 'wav' | 'flac' | 'm4a' | 'ogg',
-  bitrate = '320k',
-  bitDepth = '24-bit',
-  title = '',
-  artist = '',
-  coverUrl = '',
+  format: 'mp3' | 'wav' | 'flac' | 'm4a' | 'ogg' = 'mp3',
+  bitrate: string = '320k',
+  bitDepth: '16-bit' | '24-bit' = '24-bit',
+  title: string = 'Suno Song',
+  artist: string = 'Suno Artist',
+  coverUrl: string = '',
   options: {
     startTime?: number | string;
     endTime?: number | string;
