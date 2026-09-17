@@ -132,15 +132,45 @@ export const SunoCoreIngestView: React.FC<SunoCoreIngestViewProps> = ({
             )}
           </form>
 
-          {/* Quick Format & Ingest Options */}
-          <div className="flex items-center justify-between pt-2 text-xs text-neutral-400 border-t border-neutral-800/80">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              Direct Suno CDN stream resolution
-            </span>
+          {/* Quick Sample Links and Format Badges */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-neutral-400 border-t border-neutral-800/80">
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="text-neutral-500 font-mono">Quick test:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrlInput('https://suno.com/song/386ddb56-4c28-4a77-a0ad-2aad565ac22c');
+                  onFetchUrl('https://suno.com/song/386ddb56-4c28-4a77-a0ad-2aad565ac22c');
+                }}
+                className="px-2 py-1 rounded-lg bg-neutral-800/90 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/60 transition-all font-mono"
+              >
+                ♫ Song: Just Imagine
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrlInput('https://suno.com/playlist/0d597d0c-cdb2-4f9c-b4da-57931929f0d0');
+                  onFetchUrl('https://suno.com/playlist/0d597d0c-cdb2-4f9c-b4da-57931929f0d0');
+                }}
+                className="px-2 py-1 rounded-lg bg-neutral-800/90 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/60 transition-all font-mono"
+              >
+                ◈ Playlist: Best of v6
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUrlInput('https://suno.com/@suno');
+                  onFetchUrl('https://suno.com/@suno');
+                }}
+                className="px-2 py-1 rounded-lg bg-neutral-800/90 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/60 transition-all font-mono"
+              >
+                @suno Discography
+              </button>
+            </div>
+
             <button
               onClick={onOpenBulkImporter}
-              className="text-[#ff2d55] font-bold hover:underline flex items-center gap-1 cursor-pointer"
+              className="text-[#ff2d55] font-bold hover:underline flex items-center gap-1 cursor-pointer shrink-0"
             >
               <Layers className="w-3.5 h-3.5" />
               <span>Bulk Multi-URL Importer</span>

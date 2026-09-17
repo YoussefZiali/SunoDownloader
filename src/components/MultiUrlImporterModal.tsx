@@ -9,6 +9,7 @@ interface MultiUrlImporterModalProps {
   onDownloadTrack: (track: SunoTrack, format: AudioFormat, options?: any) => Promise<void>;
   settings: UserSettings;
   onSelectTrackForPlayer?: (track: SunoTrack) => void;
+  onImportToLibrary?: (tracks: SunoTrack[]) => void;
 }
 
 export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
@@ -18,6 +19,7 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
   onDownloadTrack,
   settings,
   onSelectTrackForPlayer,
+  onImportToLibrary,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isResolving, setIsResolving] = useState(false);
@@ -26,8 +28,18 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
   const [selectedFormat, setSelectedFormat] = useState<AudioFormat>(settings.defaultFormat || 'mp3');
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [downloadStep, setDownloadStep] = useState<string>('');
+  const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleImportToLibraryClick = () => {
+    if (queuedTracks.length === 0 || !onImportToLibrary) return;
+    onImportToLibrary(queuedTracks);
+    setImportSuccessMessage(`Successfully imported ${queuedTracks.length} tracks into your Library & Crates!`);
+    setTimeout(() => {
+      setImportSuccessMessage(null);
+    }, 4000);
+  };
 
   const handleParseAndQueue = async () => {
     if (!inputText.trim()) return;
@@ -344,26 +356,45 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              {importSuccessMessage && (
+                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span className="truncate">{importSuccessMessage}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                {onImportToLibrary && (
+                  <button
+                    type="button"
+                    id="bulk-import-library-btn"
+                    onClick={handleImportToLibraryClick}
+                    disabled={isBatchDownloading}
+                    className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Add to Library</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   id="bulk-download-zip-btn"
                   onClick={handleDownloadAllZip}
                   disabled={isBatchDownloading}
-                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#ff2d55] to-[#d61d44] hover:opacity-95 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-md shadow-[#ff2d55]/20"
+                  className={`w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#ff2d55] to-[#d61d44] hover:opacity-95 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-[#ff2d55]/20 ${!onImportToLibrary ? 'sm:col-span-1' : ''}`}
                 >
-                  <FolderArchive className="w-4 h-4" />
-                  Download All as {selectedFormat.toUpperCase()} ZIP
+                  <FolderArchive className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Download ZIP</span>
                 </button>
                 <button
                   type="button"
                   id="bulk-download-individual-btn"
                   onClick={handleDownloadIndividualAll}
                   disabled={isBatchDownloading}
-                  className="w-full py-2.5 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-200 text-xs font-bold transition-all flex items-center justify-center gap-2 border border-neutral-700"
+                  className="w-full py-2.5 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-neutral-700"
                 >
-                  <Download className="w-4 h-4" />
-                  Download Individually
+                  <Download className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Download All</span>
                 </button>
               </div>
             </div>

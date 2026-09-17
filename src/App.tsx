@@ -518,14 +518,15 @@ export default function App() {
 
       if (data.type === 'playlist' && data.playlist) {
         if (data.playlist.tracks && data.playlist.tracks.length > 0) {
-          setPlaylists(prev => [data.playlist, ...prev]);
+          setPlaylists(prev => [data.playlist, ...prev.filter(p => p.id !== data.playlist.id)]);
           setAllTracks(prev => {
             const existingIds = new Set(prev.map(t => t.id));
             const newTracks = data.playlist.tracks.filter((t: SunoTrack) => !existingIds.has(t.id));
             return [...newTracks, ...prev];
           });
+          setSelectedPlaylist(data.playlist);
           setCurrentTrack(data.playlist.tracks[0]);
-          setActiveTab('library');
+          setActiveTab('playlist');
         }
       } else if (data.type === 'song' && data.track) {
         setAllTracks(prev => {
@@ -989,6 +990,13 @@ export default function App() {
         onDownloadBatchZip={handleDownloadBatchZip}
         onDownloadTrack={handleDownloadTrack}
         settings={settings}
+        onImportToLibrary={(tracks) => {
+          setAllTracks(prev => {
+            const existingIds = new Set(prev.map(t => t.id));
+            const newTracks = tracks.filter(t => !existingIds.has(t.id));
+            return [...newTracks, ...prev];
+          });
+        }}
         onSelectTrackForPlayer={(track) => {
           setAllTracks(prev => {
             if (prev.some(t => t.id === track.id)) return prev;

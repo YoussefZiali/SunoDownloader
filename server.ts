@@ -329,13 +329,13 @@ async function resolveSunoShareUrl(rawUrl: string): Promise<{ resolvedUrl: strin
       const res = await fetch(targetUrl, {
         redirect: 'manual',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       });
 
       const loc = res.headers.get('location');
-      if (loc) {
+      if (loc && loc !== '/') {
         const fullLoc = loc.startsWith('/') ? `https://suno.com${loc}` : loc;
         return { resolvedUrl: fullLoc, shareCode };
       }
@@ -344,7 +344,7 @@ async function resolveSunoShareUrl(rawUrl: string): Promise<{ resolvedUrl: strin
       const followRes = await fetch(targetUrl, {
         redirect: 'follow',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         },
       });
       return { resolvedUrl: followRes.url, shareCode };
@@ -358,11 +358,13 @@ async function resolveSunoShareUrl(rawUrl: string): Promise<{ resolvedUrl: strin
 
 // Reusable Playlist Fetcher
 async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> {
+  const cleanId = playlistId.replace(/^playlist\//i, '').replace(/^p\//i, '').trim();
   const queryParam = sh ? `?sh=${encodeURIComponent(sh)}` : '';
   const endpoints = [
-    `https://studio-api.prod.suno.com/api/playlist/${playlistId}${queryParam}`,
-    `https://studio-api.suno.ai/api/playlist/${playlistId}${queryParam}`,
-    `https://studio-api.prod.suno.com/api/playlist/${playlistId}/?page=1`,
+    `https://studio-api.prod.suno.com/api/playlist/${cleanId}${queryParam}`,
+    `https://studio-api.prod.suno.com/api/playlist/${cleanId}/?page=1`,
+    `https://studio-api.prod.suno.com/api/playlist/${cleanId}`,
+    `https://studio-api.suno.ai/api/playlist/${cleanId}${queryParam}`,
   ];
 
   let rawData: any = null;
@@ -371,12 +373,12 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
       const r = await fetch(ep, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
         },
       });
       if (r.ok) {
         rawData = await r.json();
-        if (rawData && (rawData.playlist_clips || rawData.clips)) {
+        if (rawData && (rawData.playlist_clips || rawData.clips || rawData.name)) {
           break;
         }
       }
@@ -388,7 +390,7 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
   // Fallback: If studio-api fails, fetch playlist page HTML and extract clips
   if (!rawData || !(rawData.playlist_clips || rawData.clips)) {
     try {
-      const pageUrl = `https://suno.com/playlist/${playlistId}${queryParam}`;
+      const pageUrl = `https://suno.com/playlist/${cleanId}${queryParam}`;
       const pageRes = await fetch(pageUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -416,19 +418,20 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
         }
 
         if (extractedClips.length > 0) {
-          let plTitle = `Playlist ${playlistId.slice(0, 8)}`;
+          let plTitle = `Playlist ${cleanId.slice(0, 8)}`;
           const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
           if (titleMatch) {
             plTitle = titleMatch[1].replace(/\s*\|\s*Suno\s*$/i, '').trim();
           }
           rawData = {
+            id: cleanId,
             name: plTitle,
             playlist_clips: extractedClips.map((c) => ({ clip: c })),
           };
         }
       }
     } catch (e: any) {
-      console.warn('Flight HTML fallback error for playlist:', e.message);
+      console.warn('HTML fallback error for playlist:', e.message);
     }
   }
 
@@ -455,8 +458,8 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
       return {
         id: trackId,
         title: clip.title || `Suno Track ${trackId?.slice(0, 8)}`,
-        artist: clip.display_name || clip.handle || 'Suno Artist',
-        handle: clip.handle ? `@${clip.handle}` : '@suno_user',
+        artist: clip.display_name || clip.handle || rawData.user_display_name || 'Suno Artist',
+        handle: clip.handle ? `@${clip.handle.replace(/^@/, '')}` : (rawData.user_handle ? `@${rawData.user_handle.replace(/^@/, '')}` : '@suno_user'),
         audio_url: cdnAudio,
         video_url: clip.video_url || `https://cdn1.suno.ai/${trackId}.mp4`,
         image_url: clip.image_large_url || clip.image_url || `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
@@ -472,16 +475,79 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
       };
     });
 
+    const creator = rawData.user_display_name || rawData.user_handle || 'Suno User';
+    const creatorHandle = rawData.user_handle ? `@${rawData.user_handle.replace(/^@/, '')}` : '@suno';
+
     return {
-      id: playlistId,
+      id: cleanId,
       title: rawData.name || rawData.title || 'Suno Playlist',
+      creator,
+      creatorHandle,
       description: rawData.description || '',
       cover_url: rawData.image_url || tracks[0]?.image_url || '',
       tracks,
     };
   }
 
-  throw new Error('Playlist not found on Suno');
+  throw new Error(`Playlist ${cleanId} not found on Suno`);
+}
+
+// Helper to fetch Suno Creator Profile and extract public discography/playlists
+async function fetchUserProfileData(rawUsername: string): Promise<any> {
+  const username = rawUsername.replace(/^@/, '').trim();
+  const pageUrl = `https://suno.com/@${encodeURIComponent(username)}`;
+
+  try {
+    const pageRes = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+
+    if (!pageRes.ok) {
+      throw new Error(`Profile @${username} returned status ${pageRes.status}`);
+    }
+
+    const html = await pageRes.text();
+    const plLinks = Array.from(new Set(Array.from(html.matchAll(/\/(?:playlist|p)\/([a-f0-9-]{36})/gi)).map(m => m[1])));
+
+    const allDiscoveredTracks: any[] = [];
+    const seenTrackIds = new Set<string>();
+
+    // Fetch tracks from the creator's playlists
+    for (const plId of plLinks.slice(0, 4)) {
+      try {
+        const plData = await fetchPlaylistData(plId);
+        if (plData && plData.tracks) {
+          for (const trk of plData.tracks) {
+            if (!seenTrackIds.has(trk.id)) {
+              seenTrackIds.add(trk.id);
+              allDiscoveredTracks.push(trk);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    let creatorName = username;
+    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
+    if (titleMatch) {
+      creatorName = titleMatch[1].replace(/\s*\|\s*Suno\s*$/i, '').trim();
+    }
+
+    return {
+      id: `profile-${username}`,
+      title: `@${username} Discography`,
+      creator: creatorName || `@${username}`,
+      creatorHandle: `@${username}`,
+      description: `Public tracks & releases by @${username} on Suno`,
+      cover_url: allDiscoveredTracks[0]?.image_url || '',
+      tracks: allDiscoveredTracks,
+    };
+  } catch (err: any) {
+    throw new Error(`Could not load creator profile @${username}: ${err.message}`);
+  }
 }
 
 // Reusable Track Fetcher
@@ -682,10 +748,16 @@ async function fetchTrackData(trackId: string): Promise<any> {
 function extractSunoIds(input: string): { type: 'song' | 'playlist' | 'profile' | 'unknown'; ids: string[] } {
   const trimmed = input.trim();
 
-  // Playlist pattern: suno.com/playlist/[uuid]
-  const playlistMatch = trimmed.match(/suno\.(?:com|ai)\/playlist\/([a-zA-Z0-9_-]+)/i);
+  // Playlist pattern: suno.com/playlist/[id] or suno.com/p/[id] or suno.com/@user/playlist/[id]
+  const playlistMatch = trimmed.match(/(?:suno\.(?:com|ai)\/(?:@[a-zA-Z0-9_.-]+\/)?(?:playlist|p)\/|suno\.(?:com|ai)\/playlist\/|(?:\/|^)(?:playlist|p)\/)([a-zA-Z0-9_-]+)/i);
   if (playlistMatch) {
     return { type: 'playlist', ids: [playlistMatch[1]] };
+  }
+
+  // Profile pattern: suno.com/@username or @username
+  const profileMatch = trimmed.match(/(?:suno\.(?:com|ai)\/)?@([a-zA-Z0-9_.-]+)(?:\/|\?|$)/i);
+  if (profileMatch && !trimmed.includes('/song/') && !trimmed.includes('/clip/')) {
+    return { type: 'profile', ids: [profileMatch[1]] };
   }
 
   // Find all UUIDs (e.g. from pasted text or multiple URLs)
@@ -693,12 +765,6 @@ function extractSunoIds(input: string): { type: 'song' | 'playlist' | 'profile' 
   if (uuidMatches && uuidMatches.length > 0) {
     const uniqueIds = Array.from(new Set(uuidMatches));
     return { type: 'song', ids: uniqueIds };
-  }
-
-  // Profile pattern: suno.com/@username
-  const profileMatch = trimmed.match(/suno\.(?:com|ai)\/@([a-zA-Z0-9_-]+)/i);
-  if (profileMatch) {
-    return { type: 'profile', ids: [profileMatch[1]] };
   }
 
   return { type: 'unknown', ids: [] };
@@ -714,8 +780,8 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
 
     const { resolvedUrl, shareCode } = await resolveSunoShareUrl(url);
 
-    // 1. Check if it is explicitly a playlist URL
-    const playlistMatch = resolvedUrl.match(/suno\.(?:com|ai)\/playlist\/([a-zA-Z0-9_-]+)/i);
+    // 1. Check if it is a Suno Playlist URL (including /p/ and /@username/playlist/ and /@username/p/)
+    const playlistMatch = resolvedUrl.match(/(?:suno\.(?:com|ai)\/(?:@[a-zA-Z0-9_.-]+\/)?(?:playlist|p)\/|suno\.(?:com|ai)\/playlist\/|(?:\/|^)(?:playlist|p)\/)([a-zA-Z0-9_-]+)/i);
     if (playlistMatch) {
       const playlistId = playlistMatch[1];
       let sh = shareCode || '';
@@ -735,19 +801,49 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
       });
     }
 
-    // 2. Check if it has a track UUID or generic UUID
+    // 2. Check if it is a Creator Profile URL (e.g. https://suno.com/@username or @username)
+    const profileMatch = resolvedUrl.match(/(?:suno\.(?:com|ai)\/)?@([a-zA-Z0-9_.-]+)(?:\/|\?|$)/i);
+    if (profileMatch && !resolvedUrl.includes('/song/') && !resolvedUrl.includes('/clip/')) {
+      const username = profileMatch[1];
+      try {
+        const profilePlaylist = await fetchUserProfileData(username);
+        return res.json({
+          type: 'playlist',
+          resolvedUrl,
+          playlist: profilePlaylist,
+        });
+      } catch (profErr: any) {
+        // fall through to search or error
+      }
+    }
+
+    // 3. Check if it has a track UUID or generic UUID
     const uuidMatch = resolvedUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
     if (uuidMatch) {
       const targetId = uuidMatch[0];
 
       // If URL explicitly points to song/clip
-      if (resolvedUrl.includes('/song/') || resolvedUrl.includes('/clip/')) {
-        const track = await fetchTrackData(targetId);
-        return res.json({
-          type: 'song',
-          resolvedUrl,
-          track,
-        });
+      if (resolvedUrl.includes('/song/') || resolvedUrl.includes('/clip/') || resolvedUrl.includes('/embed/') || resolvedUrl.includes('/c/')) {
+        try {
+          const track = await fetchTrackData(targetId);
+          return res.json({
+            type: 'song',
+            resolvedUrl,
+            track,
+          });
+        } catch (songErr: any) {
+          // If song fetch fails, try as playlist ID before giving up
+          try {
+            const playlist = await fetchPlaylistData(targetId, shareCode);
+            return res.json({
+              type: 'playlist',
+              resolvedUrl,
+              playlist,
+            });
+          } catch {
+            throw songErr;
+          }
+        }
       }
 
       // Otherwise, attempt track first, then fallback to playlist
@@ -767,12 +863,12 @@ app.all('/api/suno/resolve', async (req: Request, res: Response) => {
             playlist,
           });
         } catch (playlistErr: any) {
-          throw new Error(`Could not find track or playlist for ID ${targetId}`);
+          throw new Error(`Could not find song or playlist for ID ${targetId}`);
         }
       }
     }
 
-    return res.status(404).json({ error: 'Could not recognize Suno song or playlist from this URL' });
+    return res.status(404).json({ error: 'Could not recognize Suno song or playlist from this URL. Please verify link format.' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Failed to resolve Suno link' });
   }
@@ -792,7 +888,8 @@ app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
       try {
         const { resolvedUrl, shareCode } = await resolveSunoShareUrl(rawUrl);
 
-        const playlistMatch = resolvedUrl.match(/suno\.(?:com|ai)\/playlist\/([a-zA-Z0-9_-]+)/i);
+        // Playlist match
+        const playlistMatch = resolvedUrl.match(/(?:suno\.(?:com|ai)\/(?:@[a-zA-Z0-9_.-]+\/)?(?:playlist|p)\/|suno\.(?:com|ai)\/playlist\/|(?:\/|^)(?:playlist|p)\/)([a-zA-Z0-9_-]+)/i);
         if (playlistMatch) {
           const playlistId = playlistMatch[1];
           let sh = shareCode || '';
@@ -805,6 +902,15 @@ app.post('/api/suno/resolve-batch', async (req: Request, res: Response) => {
           return { url: rawUrl, success: true, type: 'playlist', playlist };
         }
 
+        // Profile match
+        const profileMatch = resolvedUrl.match(/(?:suno\.(?:com|ai)\/)?@([a-zA-Z0-9_.-]+)(?:\/|\?|$)/i);
+        if (profileMatch && !resolvedUrl.includes('/song/') && !resolvedUrl.includes('/clip/')) {
+          const username = profileMatch[1];
+          const profilePlaylist = await fetchUserProfileData(username);
+          return { url: rawUrl, success: true, type: 'playlist', playlist: profilePlaylist };
+        }
+
+        // UUID match
         const uuidMatch = resolvedUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
         if (uuidMatch) {
           const targetId = uuidMatch[0];
