@@ -124,34 +124,34 @@ export const AudioTrimmerModal: React.FC<AudioTrimmerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-xl p-2.5 sm:p-4">
       <div 
-        className="w-full max-w-lg bg-[#0e0f14] border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200 text-white"
+        className="w-full max-w-lg bg-[#0e0f14] border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[88vh] animate-in fade-in zoom-in-95 duration-200 text-white"
         id="audio-trimmer-modal"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/80 bg-neutral-900/40">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/40 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#ff2d55]/20 to-amber-500/20 border border-[#ff2d55]/30 flex items-center justify-center text-[#ff2d55]">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#ff2d55]/20 to-amber-500/20 border border-[#ff2d55]/30 flex items-center justify-center text-[#ff2d55] shrink-0">
               <Scissors className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-white tracking-tight">Audio Trimmer & Ringtone Clipper</h2>
-              <p className="text-xs text-neutral-400 truncate max-w-[280px]">
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-white tracking-tight truncate">Audio Trimmer & Ringtone</h2>
+              <p className="text-xs text-neutral-400 truncate max-w-[240px] sm:max-w-[280px]">
                 {track.title} • {track.artist}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center text-neutral-400 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-xl bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center text-neutral-400 hover:text-white transition-colors shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
           {/* Waveform timeline preview */}
           <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
             <div className="flex items-center justify-between text-xs">

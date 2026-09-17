@@ -36,7 +36,7 @@ export const DownloadHistoryDrawer: React.FC<DownloadHistoryDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/70 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-end bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
       <div 
         className="w-full max-w-md h-full bg-[#0d0e12] border-l border-neutral-800 flex flex-col shadow-2xl animate-in slide-in-from-right duration-250"
         id="history-drawer"

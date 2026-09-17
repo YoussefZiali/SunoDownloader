@@ -445,6 +445,13 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
 
       const cdnAudio = `/api/suno/stream/${trackId}.mp3`;
 
+      const prompt = clip.metadata?.prompt 
+        || clip.prompt 
+        || clip.metadata?.lyrics 
+        || clip.lyrics 
+        || clip.metadata?.gpt_description_prompt 
+        || '';
+
       return {
         id: trackId,
         title: clip.title || `Suno Track ${trackId?.slice(0, 8)}`,
@@ -457,6 +464,7 @@ async function fetchPlaylistData(playlistId: string, sh?: string): Promise<any> 
         duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
         play_count: clip.play_count || 0,
         upvote_count: clip.upvote_count || 0,
+        prompt,
         tags: clip.metadata?.tags || clip.display_tags || '',
         model: clip.major_model_version || 'v6',
         created_at: clip.created_at || new Date().toISOString(),
@@ -594,6 +602,13 @@ async function fetchTrackData(trackId: string): Promise<any> {
     ? clipData.audio_url
     : `/api/suno/stream/${trackId}.mp3`;
 
+  const prompt = clipData.metadata?.prompt 
+    || clipData.prompt 
+    || clipData.metadata?.lyrics 
+    || clipData.lyrics 
+    || clipData.metadata?.gpt_description_prompt 
+    || '';
+
   return {
     id: trackId,
     title: clipData.title || `Suno Track ${trackId.slice(0, 8)}`,
@@ -606,6 +621,7 @@ async function fetchTrackData(trackId: string): Promise<any> {
     duration_formatted: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
     play_count: clipData.play_count || 120,
     upvote_count: clipData.upvote_count || 12,
+    prompt,
     tags: clipData.metadata?.tags || clipData.display_tags || '',
     model: clipData.major_model_version || 'v6',
     created_at: clipData.created_at || new Date().toISOString(),
@@ -799,6 +815,182 @@ app.get('/api/suno/track/:id', async (req: Request, res: Response) => {
     return res.json(track);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Failed to fetch Suno track' });
+  }
+});
+
+// API to retrieve full lyrics & synchronized LRC / SRT for any Suno track
+app.get('/api/suno/lyrics/:id', async (req: Request, res: Response) => {
+  const rawId = req.params.id;
+  if (!rawId) {
+    return res.status(400).json({ error: 'Track ID is required' });
+  }
+
+  const uuidMatch = rawId.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+  const trackId = uuidMatch ? uuidMatch[0] : rawId.trim();
+
+  try {
+    const track = await fetchTrackData(trackId);
+    const rawLyrics = track.prompt || '';
+    const duration = track.duration || 180;
+
+    // Helper functions for lyric time calculations
+    const formatLrc = (sec: number) => {
+      const mins = Math.floor(sec / 60);
+      const secs = Math.floor(sec % 60);
+      const hundredths = Math.floor((sec % 1) * 100);
+      return `[${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]`;
+    };
+
+    const formatSrt = (sec: number) => {
+      const hrs = Math.floor(sec / 3600);
+      const mins = Math.floor((sec % 3600) / 60);
+      const secs = Math.floor(sec % 60);
+      const ms = Math.floor((sec % 1) * 1000);
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    };
+
+    const lines = rawLyrics.split('\n').map((l: string) => l.trim()).filter(Boolean);
+    const validLines: { text: string; section: string }[] = [];
+    let currentSection = 'Verse';
+
+    lines.forEach((l: string) => {
+      if (l.startsWith('[') && l.endsWith(']')) {
+        currentSection = l.slice(1, -1);
+      } else {
+        validLines.push({ text: l, section: currentSection });
+      }
+    });
+
+    const structuredLines: any[] = [];
+    const totalLines = validLines.length;
+
+    if (totalLines > 0) {
+      const introBuffer = 5;
+      const outroBuffer = 5;
+      const usableDuration = Math.max(10, duration - introBuffer - outroBuffer);
+      const timePerLine = usableDuration / totalLines;
+
+      validLines.forEach((item, index) => {
+        const startTime = introBuffer + (index * timePerLine);
+        const endTime = startTime + timePerLine;
+        structuredLines.push({
+          id: `line-${index}`,
+          time: Math.round(startTime * 10) / 10,
+          endTime: Math.round(endTime * 10) / 10,
+          text: item.text,
+          section: item.section,
+        });
+      });
+    } else {
+      structuredLines.push({
+        id: 'line-0',
+        time: 0,
+        endTime: duration,
+        text: `♪ ${track.title} ♪`,
+        section: 'Instrumental',
+      });
+    }
+
+    let lrc = `[ti:${track.title}]\n[ar:${track.artist}]\n[al:Suno AI]\n[by:Suno Studio]\n\n`;
+    structuredLines.forEach((line) => {
+      lrc += `${formatLrc(line.time)}${line.text}\n`;
+    });
+
+    let srt = '';
+    structuredLines.forEach((line, index) => {
+      const end = line.endTime || (line.time + 3);
+      srt += `${index + 1}\n${formatSrt(line.time)} --> ${formatSrt(end)}\n${line.text}\n\n`;
+    });
+
+    return res.json({
+      trackId,
+      title: track.title,
+      artist: track.artist,
+      duration,
+      rawLyrics,
+      hasLyrics: Boolean(rawLyrics.trim()),
+      structuredLines,
+      lrc,
+      srt,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Failed to retrieve lyrics' });
+  }
+});
+
+// API to directly download lyrics file (.lrc, .srt, or .txt)
+app.get('/api/suno/lyrics/:id/download', async (req: Request, res: Response) => {
+  const rawId = req.params.id;
+  const format = ((req.query.format as string) || 'lrc').toLowerCase();
+  const uuidMatch = rawId?.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+  const trackId = uuidMatch ? uuidMatch[0] : rawId?.trim();
+
+  if (!trackId) {
+    return res.status(400).json({ error: 'Valid Track ID required' });
+  }
+
+  try {
+    const track = await fetchTrackData(trackId);
+    const rawLyrics = track.prompt || `♪ ${track.title} ♪`;
+    const duration = track.duration || 180;
+    const sanitize = (s: string) => s.replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const safeTitle = `${sanitize(track.artist)} - ${sanitize(track.title)}`;
+
+    if (format === 'txt') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', makeContentDisposition(`${safeTitle} (Lyrics).txt`));
+      return res.send(rawLyrics);
+    }
+
+    const formatLrc = (sec: number) => {
+      const mins = Math.floor(sec / 60);
+      const secs = Math.floor(sec % 60);
+      const hundredths = Math.floor((sec % 1) * 100);
+      return `[${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]`;
+    };
+
+    const formatSrt = (sec: number) => {
+      const hrs = Math.floor(sec / 3600);
+      const mins = Math.floor((sec % 3600) / 60);
+      const secs = Math.floor(sec % 60);
+      const ms = Math.floor((sec % 1) * 1000);
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    };
+
+    const lines = rawLyrics.split('\n').map((l: string) => l.trim()).filter(Boolean);
+    const validLines: string[] = [];
+    lines.forEach((l: string) => {
+      if (!l.startsWith('[') || !l.endsWith(']')) {
+        validLines.push(l);
+      }
+    });
+
+    const totalLines = validLines.length || 1;
+    const timePerLine = Math.max(2, (duration - 10) / totalLines);
+
+    if (format === 'srt') {
+      let srtContent = '';
+      validLines.forEach((text, index) => {
+        const start = 5 + (index * timePerLine);
+        const end = start + timePerLine;
+        srtContent += `${index + 1}\n${formatSrt(start)} --> ${formatSrt(end)}\n${text}\n\n`;
+      });
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', makeContentDisposition(`${safeTitle} (Subtitles).srt`));
+      return res.send(srtContent);
+    }
+
+    // Default LRC format
+    let lrcContent = `[ti:${track.title}]\n[ar:${track.artist}]\n[al:Suno AI]\n\n`;
+    validLines.forEach((text, index) => {
+      const start = 5 + (index * timePerLine);
+      lrcContent += `${formatLrc(start)}${text}\n`;
+    });
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', makeContentDisposition(`${safeTitle} (Synced).lrc`));
+    return res.send(lrcContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Failed to generate lyrics download' });
   }
 });
 

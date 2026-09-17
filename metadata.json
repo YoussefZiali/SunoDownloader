@@ -1,6 +1,6 @@
 {
   "name": "Suno Song",
-  "description": "A dedicated Suno song player and lossless audio downloader with interactive waveform playback, share link resolution, and high-fidelity audio exports.",
-  "requestFramePermissions": [],
+  "description": "A complete Suno AI music workstation and harmonic library featuring Suno Core audio ingest, multi-track studio DSP mastering, Spotify-style bottom player, and lossless exports.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

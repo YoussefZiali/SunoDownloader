@@ -3,10 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script>
+      (function() {
+        try {
+          if (typeof window !== 'undefined' && window.fetch) {
+            var originalFetch = window.fetch.bind(window);
+            var activeFetch = originalFetch;
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return activeFetch || originalFetch;
+              },
+              set: function(fn) {
+                activeFetch = typeof fn === 'function' ? fn : originalFetch;
+              },
+              configurable: true,
+              enumerable: true,
+            });
+          }
+        } catch (e) {
+          // Graceful fallback
+        }
+      })();
+    </script>
     <title>Suno Song</title>
-    <meta name="description" content="A dedicated Suno song player and lossless audio downloader with interactive waveform playback, share link resolution, and high-fidelity audio exports." />
+    <meta name="description" content="A complete Suno AI music workstation and harmonic library featuring Suno Core audio ingest, multi-track studio DSP mastering, Spotify-style bottom player, and lossless exports." />
     <meta property="og:title" content="Suno Song" />
-    <meta property="og:description" content="A dedicated Suno song player and lossless audio downloader with interactive waveform playback, share link resolution, and high-fidelity audio exports." />
+    <meta property="og:description" content="A complete Suno AI music workstation and harmonic library featuring Suno Core audio ingest, multi-track studio DSP mastering, Spotify-style bottom player, and lossless exports." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com">

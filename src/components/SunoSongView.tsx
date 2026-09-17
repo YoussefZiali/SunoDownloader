@@ -4,15 +4,26 @@ import {
   Share2, Check, Copy, Sparkles, Music2, Disc3, Video,
   Loader2, ExternalLink, ArrowLeft, Clipboard, ListMusic, 
   Sliders, ShieldCheck, FolderArchive, ArrowRight, Music, AlertCircle,
-  Layers, History, Scissors, Tag, CheckCircle2, X
+  Layers, History, Scissors, Tag, CheckCircle2, X, Activity, Wand2,
+  Mic, Orbit, Disc, HardDrive, Binary, Radio
 } from 'lucide-react';
 import { 
   SunoTrack, SunoPlaylist, AudioFormat, UserSettings, 
-  TrackMetadataCustomization, AudioClipRange, BatchDownloadStatus 
+  TrackMetadataCustomization, AudioClipRange, BatchDownloadStatus,
+  MusicalAnalysis
 } from '../types';
 import { BEST_OF_V6_PLAYLIST } from '../data/bestOfV6Playlist';
 import { BatchProgressBar } from './BatchProgressBar';
 import { Footer } from './Footer';
+import { AudioMasterStudioModal } from './AudioMasterStudioModal';
+import { SocialVideoMakerModal } from './SocialVideoMakerModal';
+import { PromptExtractorModal } from './PromptExtractorModal';
+import { KaraokeTeleprompterModal } from './KaraokeTeleprompterModal';
+import { Spatial8DAudioModal } from './Spatial8DAudioModal';
+import { SongMashupRemixerModal } from './SongMashupRemixerModal';
+import { AutoDjMixerModal } from './AutoDjMixerModal';
+import { OfflineLibrarySyncModal } from './OfflineLibrarySyncModal';
+import { estimateMusicAttributes } from '../utils/musicAnalyzer';
 
 interface SunoSongViewProps {
   currentTrack: SunoTrack | null;
@@ -81,6 +92,17 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
   const [isBuffering, setIsBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
+  // Advanced Pro Suite Modals
+  const [showMasterStudio, setShowMasterStudio] = useState(false);
+  const [showVideoMaker, setShowVideoMaker] = useState(false);
+  const [showPromptExtractor, setShowPromptExtractor] = useState(false);
+  const [showKaraoke, setShowKaraoke] = useState(false);
+  const [showSpatial8D, setShowSpatial8D] = useState(false);
+  const [showMashup, setShowMashup] = useState(false);
+  const [showAutoDj, setShowAutoDj] = useState(false);
+  const [showOfflineSync, setShowOfflineSync] = useState(false);
+  const [musicalAnalysis, setMusicalAnalysis] = useState<MusicalAnalysis | null>(null);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
 
@@ -95,8 +117,13 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
       setIsBuffering(false);
       setPlaybackError(null);
       setCurrentTime(0);
+      setMusicalAnalysis(null);
       return;
     }
+
+    // Estimate Musical Key & BPM for the loaded track
+    const analysis = estimateMusicAttributes(currentTrack);
+    setMusicalAnalysis(analysis);
 
     setCurrentTime(0);
     setIsPlaying(false);
@@ -864,19 +891,38 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
               </div>
 
-              {/* Tags */}
-              {currentTrack.tags && (
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {currentTrack.tags.split(',').map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2.5 py-0.5 rounded-md bg-neutral-800/80 text-neutral-300 text-xs font-semibold border border-neutral-700/60"
-                    >
-                      {tag.trim()}
+              {/* Tags & Musical Analysis */}
+              <div className="space-y-2 pt-1">
+                {musicalAnalysis && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-bold font-mono shadow-xs">
+                      <Activity className="w-3.5 h-3.5 text-purple-400" />
+                      {musicalAnalysis.bpm} BPM
                     </span>
-                  ))}
-                </div>
-              )}
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-pink-500/15 border border-pink-500/30 text-pink-300 text-xs font-bold font-mono shadow-xs">
+                      <Music className="w-3.5 h-3.5 text-pink-400" />
+                      Key: {musicalAnalysis.key} ({musicalAnalysis.camelot})
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-bold font-mono shadow-xs">
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      Energy: {musicalAnalysis.energy}
+                    </span>
+                  </div>
+                )}
+
+                {currentTrack.tags && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {currentTrack.tags.split(',').map((tag, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-0.5 rounded-md bg-neutral-800/80 text-neutral-300 text-xs font-semibold border border-neutral-700/60"
+                      >
+                        {tag.trim()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Counters */}
               <div className="flex items-center gap-4 text-xs font-bold text-neutral-400 pt-2 border-t border-neutral-800">
@@ -1101,8 +1147,192 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* 1. Audio Trimmer & Ringtone Clipper */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* 1. Live Synchronized Karaoke Sing-Along */}
+            <button
+              id="open-karaoke-btn"
+              type="button"
+              onClick={() => setShowKaraoke(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-pink-500/30 hover:border-pink-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-pink-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-pink-300 transition-colors">
+                    Live Karaoke & LRC
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Sing-along teleprompter, mic pass-thru & .LRC
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-pink-500/20 text-pink-300 group-hover:bg-pink-500 group-hover:text-white transition-colors">
+                Sing
+              </span>
+            </button>
+
+            {/* 2. 3D Spatial & 8D Audio Maker */}
+            <button
+              id="open-spatial-8d-btn"
+              type="button"
+              onClick={() => setShowSpatial8D(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-purple-500/30 hover:border-purple-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Orbit className="w-4 h-4 text-purple-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-purple-300 transition-colors">
+                    3D Spatial & 8D Audio
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  360° circular headphone spatial immersion
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-purple-500/20 text-purple-300 group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                8D Audio
+              </span>
+            </button>
+
+            {/* 4. AI Mashup & Stem Remixer Studio */}
+            <button
+              id="open-mashup-btn"
+              type="button"
+              onClick={() => setShowMashup(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-cyan-500/30 hover:border-cyan-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-cyan-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-cyan-300 transition-colors">
+                    AI Song Mashup Dual Deck
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Blend Track A vocals over Track B instrumental
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 group-hover:bg-cyan-500 group-hover:text-black transition-colors">
+                Mashup
+              </span>
+            </button>
+
+            {/* 5. AI Auto-DJ & Continuous Crossfader */}
+            <button
+              id="open-auto-dj-btn"
+              type="button"
+              onClick={() => setShowAutoDj(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-rose-500/30 hover:border-rose-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Disc className="w-4 h-4 text-rose-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-rose-300 transition-colors">
+                    AI Auto-DJ Continuous Mix
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Harmonic Camelot sort & 8-bar crossfade
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 group-hover:bg-rose-500 group-hover:text-white transition-colors">
+                DJ Mix
+              </span>
+            </button>
+
+            {/* 6. Offline Storage & Backup Sync */}
+            <button
+              id="open-offline-sync-btn"
+              type="button"
+              onClick={() => setShowOfflineSync(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-emerald-500/30 hover:border-emerald-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-4 h-4 text-emerald-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-emerald-300 transition-colors">
+                    Offline Cache & Backup
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Save offline in IndexedDB & export JSON
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 group-hover:bg-emerald-500 group-hover:text-black transition-colors">
+                Offline
+              </span>
+            </button>
+
+            {/* 7. Audio Mastering & DSP Suite */}
+            <button
+              id="open-audio-master-studio-btn"
+              type="button"
+              onClick={() => setShowMasterStudio(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-purple-500/30 hover:border-purple-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Wand2 className="w-4 h-4 text-purple-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-purple-300 transition-colors">
+                    Mastering & DSP Studio
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Punchy master, Bass boost, Lo-Fi & Slowed+Reverb
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-purple-500/20 text-purple-300 group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                Enhance
+              </span>
+            </button>
+
+            {/* 8. Social Video & Waveform Reel Maker */}
+            <button
+              id="open-video-maker-btn"
+              type="button"
+              onClick={() => setShowVideoMaker(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-rose-500/30 hover:border-rose-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Video className="w-4 h-4 text-rose-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-rose-300 transition-colors">
+                    Social Reel Video Maker
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  60 FPS TikTok, Reels & YouTube visualizers
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 group-hover:bg-rose-500 group-hover:text-white transition-colors">
+                Video
+              </span>
+            </button>
+
+            {/* 10. Suno Prompt & Style Recipe Extractor */}
+            <button
+              id="open-prompt-extractor-btn"
+              type="button"
+              onClick={() => setShowPromptExtractor(true)}
+              className="p-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800/90 border border-emerald-500/30 hover:border-emerald-500/60 text-left transition-all active:scale-98 group flex items-center justify-between"
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <span className="font-bold text-xs text-white group-hover:text-emerald-300 transition-colors">
+                    Prompt Recipe & DNA
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  Extract Suno style formula, tags & lyrics
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 group-hover:bg-emerald-500 group-hover:text-black transition-colors">
+                Recipe
+              </span>
+            </button>
+
+            {/* 11. Audio Trimmer & Ringtone Clipper */}
             <button
               id="open-audio-trimmer-btn"
               type="button"
@@ -1121,11 +1351,11 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
                 </p>
               </div>
               <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-neutral-800 text-neutral-300 group-hover:bg-white group-hover:text-black transition-colors">
-                Open
+                Trim
               </span>
             </button>
 
-            {/* 2. ID3 Metadata Studio */}
+            {/* 12. ID3 Metadata Studio */}
             <button
               id="open-id3-metadata-btn"
               type="button"
@@ -1145,37 +1375,6 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
               </div>
               <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-neutral-800 text-neutral-300 group-hover:bg-white group-hover:text-black transition-colors">
                 Edit
-              </span>
-            </button>
-
-            {/* 3. Loudness Normalization Toggle */}
-            <button
-              id="toggle-normalization-btn"
-              type="button"
-              onClick={() => onUpdateSettings({ ...settings, volumeNormalization: !settings.volumeNormalization })}
-              className={`p-3.5 rounded-2xl border text-left transition-all active:scale-98 flex items-center justify-between ${
-                settings.volumeNormalization
-                  ? 'bg-emerald-950/20 border-emerald-500/40'
-                  : 'bg-neutral-950 border-neutral-800/90 hover:bg-neutral-800/90'
-              }`}
-            >
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <Volume2 className={`w-4 h-4 ${settings.volumeNormalization ? 'text-emerald-400' : 'text-neutral-400'}`} />
-                  <span className={`font-bold text-xs ${settings.volumeNormalization ? 'text-emerald-300' : 'text-white'}`}>
-                    -14 LUFS Loudnorm
-                  </span>
-                </div>
-                <p className="text-[11px] text-neutral-400">
-                  {settings.volumeNormalization ? 'Streaming target active' : 'Audio normalization bypassed'}
-                </p>
-              </div>
-              <span className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors ${
-                settings.volumeNormalization 
-                  ? 'bg-emerald-500 text-black font-black' 
-                  : 'bg-neutral-800 text-neutral-400'
-              }`}>
-                {settings.volumeNormalization ? 'ON' : 'OFF'}
               </span>
             </button>
           </div>
@@ -1267,6 +1466,64 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
         onOpenSettings={onOpenSettings}
         onOpenHistory={onOpenHistory}
         onOpenBulkImporter={onOpenBulkImporter}
+      />
+
+      {/* Advanced Pro Studio Modals */}
+      <AudioMasterStudioModal
+        isOpen={showMasterStudio}
+        onClose={() => setShowMasterStudio(false)}
+        track={currentTrack}
+        settings={settings}
+        onDownloadTrack={onDownloadTrack}
+      />
+
+      <SocialVideoMakerModal
+        isOpen={showVideoMaker}
+        onClose={() => setShowVideoMaker(false)}
+        track={currentTrack}
+        settings={settings}
+      />
+
+      <PromptExtractorModal
+        isOpen={showPromptExtractor}
+        onClose={() => setShowPromptExtractor(false)}
+        track={currentTrack}
+      />
+
+      <KaraokeTeleprompterModal
+        isOpen={showKaraoke}
+        onClose={() => setShowKaraoke(false)}
+        track={currentTrack}
+        settings={settings}
+      />
+
+      <Spatial8DAudioModal
+        isOpen={showSpatial8D}
+        onClose={() => setShowSpatial8D(false)}
+        track={currentTrack}
+        settings={settings}
+      />
+
+      <SongMashupRemixerModal
+        isOpen={showMashup}
+        onClose={() => setShowMashup(false)}
+        trackA={currentTrack}
+        settings={settings}
+      />
+
+      <AutoDjMixerModal
+        isOpen={showAutoDj}
+        onClose={() => setShowAutoDj(false)}
+        playlist={currentPlaylist}
+        tracks={BEST_OF_V6_PLAYLIST.tracks}
+        settings={settings}
+      />
+
+      <OfflineLibrarySyncModal
+        isOpen={showOfflineSync}
+        onClose={() => setShowOfflineSync(false)}
+        currentTrack={currentTrack}
+        allTracks={BEST_OF_V6_PLAYLIST.tracks}
       />
     </div>
   );

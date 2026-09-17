@@ -25,13 +25,13 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl p-2.5 sm:p-4">
       <div 
         id="notifications-sheet"
-        className="w-full max-w-md bg-white text-neutral-900 rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
+        className="w-full max-w-md bg-white text-neutral-900 rounded-3xl shadow-2xl max-h-[85vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-neutral-100 shrink-0">
           <div className="flex items-center gap-2">
             <Bell className="w-4 h-4 text-neutral-800" />
             <h3 className="font-extrabold text-base text-neutral-900">Activity & Alerts</h3>
@@ -40,14 +40,14 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
             {notifications.length > 0 && (
               <button
                 onClick={onClear}
-                className="text-xs font-semibold text-neutral-500 hover:text-neutral-900"
+                className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 px-2 py-1 rounded-lg hover:bg-neutral-100 cursor-pointer"
               >
                 Clear
               </button>
             )}
             <button
               onClick={onClose}
-              className="w-7 h-7 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-neutral-600"
+              className="w-7 h-7 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-neutral-600 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -55,7 +55,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
         </div>
 
         {/* List */}
-        <div className="p-4 space-y-2.5 overflow-y-auto flex-1">
+        <div className="p-4 space-y-2.5 overflow-y-auto flex-1 custom-scrollbar">
           {notifications.map((n) => (
             <div
               key={n.id}

@@ -414,6 +414,68 @@ export async function createBatchZip(
   return zipBlob;
 }
 
+// Convert Web Audio AudioBuffer to clean PCM WAV Blob
+export function audioBufferToWavBlob(buffer: AudioBuffer, bitDepth: '16-bit' | '24-bit' = '16-bit'): Blob {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const is24Bit = bitDepth === '24-bit';
+  const bytesPerSample = is24Bit ? 3 : 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = buffer.length * blockAlign;
+  const wavHeaderSize = 44;
+  const arrayBuffer = new ArrayBuffer(wavHeaderSize + dataSize);
+  const view = new DataView(arrayBuffer);
+
+  // RIFF chunk descriptor
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+
+  // "fmt " sub-chunk
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // Subchunk1Size for PCM
+  view.setUint16(20, 1, true);  // AudioFormat 1 = PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, is24Bit ? 24 : 16, true);
+
+  // "data" sub-chunk
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write channel sample data
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numChannels; c++) {
+    channels.push(buffer.getChannelData(c));
+  }
+
+  let offset = 44;
+  const totalLength = buffer.length;
+
+  for (let i = 0; i < totalLength; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      // Clamp sample between -1 and 1
+      const sample = Math.max(-1, Math.min(1, channels[c][i]));
+      if (is24Bit) {
+        const val = Math.floor(sample < 0 ? sample * 0x800000 : sample * 0x7FFFFF);
+        view.setUint8(offset, val & 0xFF);
+        view.setUint8(offset + 1, (val >> 8) & 0xFF);
+        view.setUint8(offset + 2, (val >> 16) & 0xFF);
+        offset += 3;
+      } else {
+        const val = Math.floor(sample < 0 ? sample * 0x8000 : sample * 0x7FFF);
+        view.setInt16(offset, val, true);
+        offset += 2;
+      }
+    }
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
 // Trigger standard browser file download
 export function triggerFileDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);

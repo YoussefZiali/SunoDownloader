@@ -2,31 +2,80 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   SunoTrack, SunoPlaylist, AudioFormat, UserSettings, 
   DownloadHistoryEntry, TrackMetadataCustomization, AudioClipRange,
-  BatchDownloadStatus
+  BatchDownloadStatus, ActiveTab
 } from './types';
 import { DEFAULT_USER_SETTINGS, INITIAL_TRACKS, INITIAL_PLAYLISTS } from './data/mockSunoData';
 import { convertTrackToFormat, createBatchZip, triggerFileDownload } from './utils/audioConverter';
-import { SunoSongView } from './components/SunoSongView';
+import { saveTrackForOffline, getAllOfflineTracks } from './utils/offlineStorage';
+
+// Top Workstation Navigation
+import { StudioHeader } from './components/StudioHeader';
+import { Navigation } from './components/Navigation';
+
+// Main Workstation Views
+import { MusicLibraryCratesView } from './components/MusicLibraryCratesView';
+import { ExploreDiscoverView } from './components/ExploreDiscoverView';
+import { PlaylistDetailView } from './components/PlaylistDetailView';
+import { StudioDawWorkstationView } from './components/StudioDawWorkstationView';
+import { DjCreativeSuiteView } from './components/DjCreativeSuiteView';
+import { SunoCoreIngestView } from './components/SunoCoreIngestView';
+import { ExportHubView } from './components/ExportHubView';
+
+// Studio Modals & Creative Workbenches
 import { MultiUrlImporterModal } from './components/MultiUrlImporterModal';
 import { DownloadHistoryDrawer } from './components/DownloadHistoryDrawer';
 import { AudioTrimmerModal } from './components/AudioTrimmerModal';
 import { Id3MetadataEditorModal } from './components/Id3MetadataEditorModal';
 import { SettingsModal } from './components/SettingsModal';
+import { SongMashupRemixerModal } from './components/SongMashupRemixerModal';
+import { AutoDjMixerModal } from './components/AutoDjMixerModal';
+import { Spatial8DAudioModal } from './components/Spatial8DAudioModal';
+import { KaraokeTeleprompterModal } from './components/KaraokeTeleprompterModal';
+import { PromptExtractorModal } from './components/PromptExtractorModal';
+import { SocialVideoMakerModal } from './components/SocialVideoMakerModal';
+import { TrackActionMenu } from './components/TrackActionMenu';
+import { SpotifyPlayerBar } from './components/SpotifyPlayerBar';
 
 export default function App() {
-  // Current track / playlist states
-  const [currentTrack, setCurrentTrack] = useState<SunoTrack | null>(null);
-  const [currentPlaylist, setCurrentPlaylist] = useState<SunoPlaylist | null>(null);
+  // Navigation State
+  const [activeTab, setActiveTab] = useState<ActiveTab>('library');
 
-  // Loading & Error States
+  // Active track & playlist catalog
+  const [currentTrack, setCurrentTrack] = useState<SunoTrack | null>(INITIAL_TRACKS[0] || null);
+  const [allTracks, setAllTracks] = useState<SunoTrack[]>(INITIAL_TRACKS);
+  const [playlists, setPlaylists] = useState<SunoPlaylist[]>(INITIAL_PLAYLISTS);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<SunoPlaylist | null>(INITIAL_PLAYLISTS[0] || null);
+
+  // Global Audio Playback State
+  const [isPlaying, setIsPlaying] = useState(false);
+  const globalAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Spotify Player Bar State Engine
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('suno_player_volume');
+      return saved ? parseFloat(saved) : 0.8;
+    } catch {
+      return 0.8;
+    }
+  });
+  const [isMuted, setIsMuted] = useState(false);
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+
+  // Offline Stored Track IDs
+  const [offlineTrackIds, setOfflineTrackIds] = useState<Set<string>>(new Set());
+
+  // Ingest Loading & Error States
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Download State & Progress
+  // Download & Batch Status
   const [activeDownloadingFormat, setActiveDownloadingFormat] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ [key: string]: number }>({});
-  
-  // Detailed Batch Download Progress Status
   const [batchStatus, setBatchStatus] = useState<BatchDownloadStatus>({
     isActive: false,
     totalTracks: 0,
@@ -40,7 +89,7 @@ export default function App() {
   });
   const batchAbortRef = useRef<boolean>(false);
 
-  // Settings - locked to mp3 for now as other formats are Coming Soon
+  // App Settings
   const [settings, setSettings] = useState<UserSettings>(() => {
     try {
       const saved = localStorage.getItem('suno_user_settings');
@@ -65,69 +114,294 @@ export default function App() {
     };
   });
 
-  // Modal controls
+  // Modal Visibility States
   const [showBulkImporter, setShowBulkImporter] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [isExportingClip, setIsExportingClip] = useState(false);
+  const [showMashup, setShowMashup] = useState(false);
+  const [showAutoDj, setShowAutoDj] = useState(false);
+  const [showSpatial8D, setShowSpatial8D] = useState(false);
+  const [showKaraoke, setShowKaraoke] = useState(false);
+  const [showPromptExtractor, setShowPromptExtractor] = useState(false);
+  const [showVideoMaker, setShowVideoMaker] = useState(false);
+  const [showTrackActionMenu, setShowTrackActionMenu] = useState(false);
+  const [actionMenuTrack, setActionMenuTrack] = useState<SunoTrack | null>(null);
 
   // Per-track customization
   const [customMetadata, setCustomMetadata] = useState<TrackMetadataCustomization>({});
   const [clipRange, setClipRange] = useState<AudioClipRange>({ enabled: false, startTime: 0, endTime: 30 });
+  const [isExportingClip, setIsExportingClip] = useState(false);
 
-  // Download history loaded from localStorage with auto-clear filter applied
+  // Download History
   const [history, setHistory] = useState<DownloadHistoryEntry[]>(() => {
     try {
       const saved = localStorage.getItem('suno_download_history');
       if (saved) {
         const parsed: DownloadHistoryEntry[] = JSON.parse(saved);
-        const settingsSaved = localStorage.getItem('suno_user_settings');
-        if (settingsSaved) {
-          const s = JSON.parse(settingsSaved);
-          if (s.autoClearHistory && s.autoClearHistoryDays > 0) {
-            const maxAgeMs = s.autoClearHistoryDays * 24 * 60 * 60 * 1000;
-            const now = Date.now();
-            const valid = parsed.filter(item => (now - item.downloadedAt) <= maxAgeMs);
-            if (valid.length !== parsed.length) {
-              try {
-                localStorage.setItem('suno_download_history', JSON.stringify(valid));
-              } catch {}
-            }
-            return valid;
-          }
-        }
         return parsed;
       }
     } catch {}
     return [];
   });
 
-  // Save settings on changes
+  // Load Offline Cache IDs on Mount
+  useEffect(() => {
+    const syncOffline = async () => {
+      try {
+        const cached = await getAllOfflineTracks();
+        setOfflineTrackIds(new Set(cached.map((c) => c.id)));
+      } catch {}
+    };
+    syncOffline();
+  }, []);
+
+  // Sync Settings to LocalStorage
   useEffect(() => {
     try {
       localStorage.setItem('suno_user_settings', JSON.stringify(settings));
     } catch {}
   }, [settings]);
 
-  // Auto-clear download history after specified days to keep local storage clean
+  // Global Audio Controller & Event Listeners
   useEffect(() => {
-    if (!settings.autoClearHistory || !settings.autoClearHistoryDays) return;
-    const maxAgeMs = settings.autoClearHistoryDays * 24 * 60 * 60 * 1000;
-    const now = Date.now();
+    if (!globalAudioRef.current) {
+      const audio = new Audio();
+      audio.crossOrigin = 'anonymous';
+      audio.volume = volume;
+      audio.playbackRate = playbackRate;
+      globalAudioRef.current = audio;
+    }
 
-    setHistory((prev) => {
-      const valid = prev.filter((entry) => (now - entry.downloadedAt) <= maxAgeMs);
-      if (valid.length !== prev.length) {
-        try {
-          localStorage.setItem('suno_download_history', JSON.stringify(valid));
-        } catch {}
-        return valid;
+    const audio = globalAudioRef.current;
+
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+    };
+
+    const onLoadedMetadata = () => {
+      setDuration(audio.duration || currentTrack?.duration || 180);
+    };
+
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+    };
+  }, []);
+
+  // Update track source when currentTrack changes
+  useEffect(() => {
+    const audio = globalAudioRef.current;
+    if (!audio || !currentTrack) return;
+
+    const streamUrl = currentTrack.id ? `/api/suno/stream/${currentTrack.id}.mp3` : currentTrack.audio_url;
+    const fullUrl = streamUrl.startsWith('http') ? streamUrl : `${window.location.origin}${streamUrl}`;
+    
+    if (audio.src !== fullUrl) {
+      audio.src = streamUrl;
+      audio.playbackRate = playbackRate;
+      setCurrentTime(0);
+      if (isPlaying) {
+        audio.play().catch(() => {});
       }
-      return prev;
-    });
-  }, [settings.autoClearHistory, settings.autoClearHistoryDays]);
+    }
+  }, [currentTrack?.id]);
+
+  // Handle Track Completion (Repeat one, next track, or stop)
+  useEffect(() => {
+    const audio = globalAudioRef.current;
+    if (!audio) return;
+
+    const onEnded = () => {
+      if (repeatMode === 'one') {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      } else {
+        handleNextTrack();
+      }
+    };
+
+    audio.addEventListener('ended', onEnded);
+    return () => audio.removeEventListener('ended', onEnded);
+  }, [repeatMode, allTracks, currentTrack?.id, isShuffle]);
+
+  const toggleGlobalPlay = () => {
+    if (!globalAudioRef.current) return;
+    if (isPlaying) {
+      globalAudioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      globalAudioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    }
+  };
+
+  const handlePlaySpecificTrack = (track: SunoTrack) => {
+    if (currentTrack?.id === track.id) {
+      toggleGlobalPlay();
+    } else {
+      setCurrentTrack(track);
+      if (globalAudioRef.current) {
+        const streamUrl = track.id ? `/api/suno/stream/${track.id}.mp3` : track.audio_url;
+        globalAudioRef.current.src = streamUrl;
+        globalAudioRef.current.currentTime = 0;
+        setCurrentTime(0);
+        globalAudioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      }
+    }
+  };
+
+  const handleSeek = (time: number) => {
+    if (globalAudioRef.current) {
+      globalAudioRef.current.currentTime = time;
+    }
+    setCurrentTime(time);
+  };
+
+  // Synchronize audio volume and mute state whenever changed
+  useEffect(() => {
+    const audio = globalAudioRef.current;
+    if (!audio) return;
+    try {
+      audio.volume = isMuted ? 0 : Math.max(0, Math.min(1, volume));
+      audio.muted = isMuted;
+    } catch {}
+  }, [volume, isMuted]);
+
+  const handleVolumeChange = (vol: number) => {
+    const safeVol = Math.max(0, Math.min(1, vol));
+    if (globalAudioRef.current) {
+      try {
+        globalAudioRef.current.volume = safeVol;
+        globalAudioRef.current.muted = safeVol === 0;
+      } catch {}
+    }
+    setVolume(safeVol);
+    setIsMuted(safeVol === 0);
+    try {
+      localStorage.setItem('suno_player_volume', String(safeVol));
+    } catch {}
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted;
+    if (globalAudioRef.current) {
+      try {
+        globalAudioRef.current.muted = nextMuted;
+        if (!nextMuted && volume === 0) {
+          globalAudioRef.current.volume = 0.75;
+          setVolume(0.75);
+        }
+      } catch {}
+    }
+    setIsMuted(nextMuted);
+    if (!nextMuted && volume === 0) {
+      setVolume(0.75);
+    }
+  };
+
+  const handleNextTrack = () => {
+    if (allTracks.length === 0) return;
+    if (!currentTrack) {
+      handlePlaySpecificTrack(allTracks[0]);
+      return;
+    }
+
+    const currentIndex = allTracks.findIndex((t) => t.id === currentTrack.id);
+    let nextIndex: number;
+
+    if (isShuffle) {
+      if (allTracks.length === 1) {
+        nextIndex = 0;
+      } else {
+        do {
+          nextIndex = Math.floor(Math.random() * allTracks.length);
+        } while (nextIndex === currentIndex && allTracks.length > 1);
+      }
+    } else {
+      nextIndex = (currentIndex + 1) % allTracks.length;
+    }
+
+    handlePlaySpecificTrack(allTracks[nextIndex]);
+  };
+
+  const handlePrevTrack = () => {
+    if (allTracks.length === 0) return;
+    if (!currentTrack) {
+      handlePlaySpecificTrack(allTracks[0]);
+      return;
+    }
+
+    const audio = globalAudioRef.current;
+    if (audio && audio.currentTime > 3) {
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      return;
+    }
+
+    const currentIndex = allTracks.findIndex((t) => t.id === currentTrack.id);
+    const prevIndex = (currentIndex - 1 + allTracks.length) % allTracks.length;
+    handlePlaySpecificTrack(allTracks[prevIndex]);
+  };
+
+  const handleToggleShuffle = () => {
+    setIsShuffle((prev) => !prev);
+  };
+
+  const handleToggleRepeat = () => {
+    setRepeatMode((prev) => (prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off'));
+  };
+
+  const handleChangePlaybackRate = (rate: number) => {
+    if (globalAudioRef.current) {
+      globalAudioRef.current.playbackRate = rate;
+    }
+    setPlaybackRate(rate);
+  };
+
+  // Spacebar & Arrow Key Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        toggleGlobalPlay();
+      } else if (e.code === 'ArrowLeft') {
+        if (e.shiftKey) {
+          handlePrevTrack();
+        } else {
+          e.preventDefault();
+          handleSeek(Math.max(0, currentTime - 5));
+        }
+      } else if (e.code === 'ArrowRight') {
+        if (e.shiftKey) {
+          handleNextTrack();
+        } else {
+          e.preventDefault();
+          handleSeek(Math.min(duration || 180, currentTime + 5));
+        }
+      } else if (e.key === 'm' || e.key === 'M') {
+        handleToggleMute();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentTime, duration, isPlaying, isMuted, currentTrack?.id, allTracks]);
 
   // Helper to add history record
   const addHistoryRecord = (entry: Omit<DownloadHistoryEntry, 'id' | 'downloadedAt'>) => {
@@ -138,14 +412,6 @@ export default function App() {
     };
     setHistory((prev) => {
       let next = [newEntry, ...prev.filter(h => !(h.trackId === newEntry.trackId && h.format === newEntry.format && !h.wasClipped))];
-      
-      // Auto-prune older entries if setting is enabled
-      if (settings.autoClearHistory && settings.autoClearHistoryDays > 0) {
-        const maxAgeMs = settings.autoClearHistoryDays * 24 * 60 * 60 * 1000;
-        const now = Date.now();
-        next = next.filter(h => (now - h.downloadedAt) <= maxAgeMs);
-      }
-
       next = next.slice(0, 50);
       try {
         localStorage.setItem('suno_download_history', JSON.stringify(next));
@@ -161,6 +427,16 @@ export default function App() {
     } catch {}
   };
 
+  // Save Track Offline Handler
+  const handleSaveTrackOffline = async (track: SunoTrack) => {
+    try {
+      await saveTrackForOffline(track);
+      setOfflineTrackIds((prev) => new Set([...prev, track.id]));
+    } catch (err: any) {
+      alert(`Could not save track offline: ${err.message}`);
+    }
+  };
+
   // Fetch Suno Song or Playlist by URL
   const handleFetchUrl = async (input: string) => {
     setIsLoadingUrl(true);
@@ -169,37 +445,16 @@ export default function App() {
     try {
       const trimmed = input.trim();
 
-      // Check mock playlists first for instant local matching
-      const mockPl = INITIAL_PLAYLISTS.find(p => 
-        trimmed.includes(p.id) || 
-        (p.id === '0d597d0c-cdb2-4f9c-b4da-57931929f0d0' && (
-          trimmed.includes('R38WF37f66Bw6afo') || 
-          trimmed.toLowerCase().includes('v6') ||
-          trimmed.toLowerCase().includes('best')
-        ))
-      );
-      if (mockPl) {
-        setCurrentPlaylist(mockPl);
-        setCurrentTrack(null);
+      // Check local catalog
+      const localTrack = allTracks.find(t => trimmed.includes(t.id));
+      if (localTrack) {
+        setCurrentTrack(localTrack);
+        setActiveTab('studio');
         setIsLoadingUrl(false);
         return;
       }
 
-      // Check mock tracks for instant local matching
-      const mockTrack = INITIAL_TRACKS.find(t => trimmed.includes(t.id));
-      if (mockTrack) {
-        setCurrentTrack(mockTrack);
-        setCurrentPlaylist(null);
-        setCustomMetadata({});
-        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, mockTrack.duration || 180) });
-        setIsLoadingUrl(false);
-        if (settings.autoDownloadOnPaste) {
-          setTimeout(() => handleDownloadTrack(mockTrack, settings.defaultFormat), 500);
-        }
-        return;
-      }
-
-      // Master URL resolver endpoint on the backend
+      // API Resolver
       const res = await fetch('/api/suno/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -215,92 +470,71 @@ export default function App() {
 
       if (data.type === 'playlist' && data.playlist) {
         if (data.playlist.tracks && data.playlist.tracks.length > 0) {
-          setCurrentPlaylist(data.playlist);
-          setCurrentTrack(null);
-        } else {
-          throw new Error('Playlist contains no tracks.');
+          setPlaylists(prev => [data.playlist, ...prev]);
+          setAllTracks(prev => {
+            const existingIds = new Set(prev.map(t => t.id));
+            const newTracks = data.playlist.tracks.filter((t: SunoTrack) => !existingIds.has(t.id));
+            return [...newTracks, ...prev];
+          });
+          setCurrentTrack(data.playlist.tracks[0]);
+          setActiveTab('library');
         }
       } else if (data.type === 'song' && data.track) {
+        setAllTracks(prev => {
+          if (prev.some(t => t.id === data.track.id)) return prev;
+          return [data.track, ...prev];
+        });
         setCurrentTrack(data.track);
-        setCurrentPlaylist(null);
-        setCustomMetadata({});
-        setClipRange({ enabled: false, startTime: 0, endTime: Math.min(30, data.track.duration || 180) });
-        if (settings.autoDownloadOnPaste) {
-          setTimeout(() => handleDownloadTrack(data.track, settings.defaultFormat), 500);
-        }
-      } else {
-        throw new Error('Could not identify Suno song or playlist.');
+        setActiveTab('studio');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Unable to resolve Suno URL. Please check the link.');
+      setErrorMessage(err.message || 'Unable to resolve Suno URL.');
     } finally {
       setIsLoadingUrl(false);
     }
   };
 
-  // Reset to initial paste screen
-  const handleReset = () => {
-    setCurrentTrack(null);
-    setCurrentPlaylist(null);
-    setErrorMessage(null);
-    setCustomMetadata({});
-  };
-
   // Download Single Song Handler
   const handleDownloadTrack = async (
     track: SunoTrack, 
-    format: AudioFormat,
-    options?: {
-      startTime?: number;
-      endTime?: number;
-      customMetadata?: TrackMetadataCustomization;
-      normalize?: boolean;
-      duplicateIndex?: number;
-    }
+    format: AudioFormat = settings.defaultFormat,
+    customClip?: AudioClipRange
   ) => {
-    setActiveDownloadingFormat(format);
-    setDownloadProgress((prev) => ({ ...prev, [format]: 15 }));
-
     try {
-      const mergedOptions = {
-        startTime: options?.startTime,
-        endTime: options?.endTime,
-        customMetadata: options?.customMetadata || customMetadata,
-        normalize: options?.normalize ?? settings.volumeNormalization,
-        duplicateIndex: options?.duplicateIndex,
-      };
+      setActiveDownloadingFormat(format);
+      setDownloadProgress((prev) => ({ ...prev, [format]: 10 }));
 
-      const result = await convertTrackToFormat(track, format, settings, (percent) => {
-        setDownloadProgress((prev) => ({ ...prev, [format]: percent }));
-      }, mergedOptions);
+      const effectiveClip = customClip || clipRange;
+      const effectiveMeta = customMetadata[track.id];
+
+      const result = await convertTrackToFormat(
+        track,
+        format,
+        settings,
+        (pct) => {
+          setDownloadProgress((prev) => ({ ...prev, [format]: pct }));
+        },
+        {
+          customMetadata: effectiveMeta,
+          startTime: effectiveClip?.enabled ? effectiveClip.startTime : undefined,
+          endTime: effectiveClip?.enabled ? effectiveClip.endTime : undefined,
+        }
+      );
 
       triggerFileDownload(result.blob, result.fileName);
-      setDownloadProgress((prev) => ({ ...prev, [format]: 100 }));
-
-      // Record to history
-      const wasClipped = mergedOptions.startTime != null && mergedOptions.endTime != null;
-      const historyTitle = options?.duplicateIndex && options.duplicateIndex > 1
-        ? `${mergedOptions.customMetadata?.title || track.title} (${options.duplicateIndex})`
-        : (mergedOptions.customMetadata?.title || track.title);
 
       addHistoryRecord({
         trackId: track.id,
-        trackTitle: historyTitle,
-        artist: mergedOptions.customMetadata?.artist || track.artist,
+        trackTitle: effectiveMeta?.title || track.title,
+        artist: effectiveMeta?.artist || track.artist,
         imageUrl: track.image_url,
-        format,
-        durationFormatted: wasClipped 
-          ? `${Math.round(mergedOptions.endTime! - mergedOptions.startTime!)}s` 
-          : track.duration_formatted,
-        wasClipped,
-        clipRange: wasClipped 
-          ? `${Math.floor(mergedOptions.startTime! / 60)}:${(mergedOptions.startTime! % 60).toString().padStart(2, '0')} - ${Math.floor(mergedOptions.endTime! / 60)}:${(mergedOptions.endTime! % 60).toString().padStart(2, '0')}`
-          : undefined,
-        isNormalized: mergedOptions.normalize,
+        durationFormatted: track.duration_formatted,
+        format: format,
+        fileSizeFormatted: `${(result.blob.size / (1024 * 1024)).toFixed(1)} MB`,
+        wasClipped: effectiveClip?.enabled,
       });
-    } catch (err: any) {
-      alert(`Download failed: ${err.message || 'Unknown error'}`);
-    } finally {
+
+      setDownloadProgress((prev) => ({ ...prev, [format]: 100 }));
       setTimeout(() => {
         setActiveDownloadingFormat(null);
         setDownloadProgress((prev) => {
@@ -308,230 +542,113 @@ export default function App() {
           delete next[format];
           return next;
         });
-      }, 1200);
-    }
-  };
+      }, 1000);
 
-  // Export from Audio Trimmer
-  const handleExportClip = async (
-    track: SunoTrack,
-    format: AudioFormat,
-    startTime: number,
-    endTime: number,
-    normalize: boolean
-  ) => {
-    setIsExportingClip(true);
-    try {
-      await handleDownloadTrack(track, format, {
-        startTime,
-        endTime,
-        normalize,
-        customMetadata,
-      });
-      setShowTrimmer(false);
-    } finally {
-      setIsExportingClip(false);
-    }
-  };
-
-  // Cancel active batch download
-  const handleCancelBatchZip = () => {
-    batchAbortRef.current = true;
-    setBatchStatus((prev) => ({
-      ...prev,
-      phase: 'error',
-      error: 'Batch download cancelled by user.',
-    }));
-    setTimeout(() => {
+    } catch (err: any) {
+      alert(`Download failed: ${err.message || 'Unknown error'}`);
       setActiveDownloadingFormat(null);
-      setBatchStatus({
-        isActive: false,
-        totalTracks: 0,
-        completedTracks: 0,
-        currentTrackTitle: '',
-        currentTrackArtist: '',
-        currentTrackId: undefined,
-        percent: 0,
-        phase: 'idle',
-        completedTrackIds: [],
-      });
       setDownloadProgress((prev) => {
         const next = { ...prev };
-        delete next.zip;
+        delete next[format];
         return next;
       });
-    }, 1000);
+    }
   };
 
-  // Download Batch ZIP Handler for Playlists or Multi-URL batches
-  const handleDownloadBatchZip = async (tracks: SunoTrack[], format?: AudioFormat) => {
-    if (!tracks || tracks.length === 0) return;
+  // Batch Zip Download Handler
+  const handleDownloadBatchZip = async (
+    tracks: SunoTrack[], 
+    format: AudioFormat = settings.defaultFormat
+  ) => {
+    if (tracks.length === 0) return;
     batchAbortRef.current = false;
-    setActiveDownloadingFormat('zip');
-    setDownloadProgress((prev) => ({ ...prev, zip: 5 }));
 
     setBatchStatus({
       isActive: true,
       totalTracks: tracks.length,
       completedTracks: 0,
-      currentTrackTitle: tracks[0]?.title || 'Preparing...',
-      currentTrackArtist: tracks[0]?.artist || '',
-      currentTrackId: tracks[0]?.id,
+      currentTrackTitle: tracks[0].title,
+      currentTrackArtist: tracks[0].artist,
+      currentTrackId: tracks[0].id,
       percent: 5,
-      phase: 'converting',
+      phase: 'downloading',
       completedTrackIds: [],
     });
 
     try {
-      const chosenFormats: AudioFormat[] = 
-        settings.batchFormats && settings.batchFormats.length > 0
-          ? settings.batchFormats
-          : [format || settings.defaultFormat || 'mp3'];
-
-      const convertedFiles: { track: SunoTrack; blob: Blob; fileName: string }[] = [];
-      const totalOps = tracks.length * chosenFormats.length;
-      let completedOps = 0;
-
-      // Track occurrences of identical artist + title in the batch to automatically number duplicates (e.g. Song (2))
-      const nameOccurrences = new Map<string, number>();
-
+      const files: { track: SunoTrack; blob: Blob; fileName: string }[] = [];
       for (let i = 0; i < tracks.length; i++) {
-        if (batchAbortRef.current) {
-          throw new Error('Batch download cancelled.');
-        }
-
+        if (batchAbortRef.current) throw new Error('Batch download cancelled by user.');
         const t = tracks[i];
-        const trackKey = `${(t.artist || 'Suno').trim().toLowerCase()}:::${(t.title || 'Untitled').trim().toLowerCase()}`;
-        const duplicateIndex = (nameOccurrences.get(trackKey) || 0) + 1;
-        nameOccurrences.set(trackKey, duplicateIndex);
+        setBatchStatus((prev) => ({
+          ...prev,
+          completedTracks: i,
+          currentTrackTitle: t.title,
+          currentTrackArtist: t.artist,
+          currentTrackId: t.id,
+          percent: Math.round(((i + 0.2) / tracks.length) * 75),
+        }));
 
-        const displayTitle = duplicateIndex > 1 ? `${t.title} (${duplicateIndex})` : t.title;
-
-        for (const fmt of chosenFormats) {
-          if (batchAbortRef.current) break;
-
-          const currentPct = Math.min(80, Math.round((completedOps / totalOps) * 75) + 5);
-          setDownloadProgress((prev) => ({
-            ...prev,
-            zip: currentPct,
-          }));
-
-          setBatchStatus({
-            isActive: true,
-            totalTracks: tracks.length,
-            completedTracks: completedOps,
-            currentTrackTitle: displayTitle,
-            currentTrackArtist: t.artist,
-            currentTrackId: t.id,
-            percent: currentPct,
-            phase: 'converting',
-            completedTrackIds: convertedFiles.map(f => f.track.id),
-          });
-
-          const conv = await convertTrackToFormat(t, fmt, settings, undefined, {
-            normalize: settings.volumeNormalization,
-            duplicateIndex,
-          });
-          convertedFiles.push({ track: t, blob: conv.blob, fileName: conv.fileName });
-          completedOps++;
-
-          // Record each batch item to history
-          addHistoryRecord({
-            trackId: t.id,
-            trackTitle: displayTitle,
-            artist: t.artist,
-            imageUrl: t.image_url,
-            format: fmt,
-            durationFormatted: t.duration_formatted,
-            isNormalized: settings.volumeNormalization,
-          });
-        }
+        const res = await convertTrackToFormat(t, format, settings);
+        files.push({ track: t, blob: res.blob, fileName: res.fileName });
       }
 
-      if (batchAbortRef.current) {
-        throw new Error('Batch download cancelled.');
-      }
-
-      setDownloadProgress((prev) => ({ ...prev, zip: 82 }));
       setBatchStatus((prev) => ({
         ...prev,
         phase: 'zipping',
         percent: 85,
-        currentTrackTitle: 'Compressing audio files into clean ZIP archive (no cover images)...',
-        currentTrackArtist: undefined,
-        currentTrackId: undefined,
-        completedTrackIds: convertedFiles.map(f => f.track.id),
       }));
 
-      const zipBlob = await createBatchZip(convertedFiles, settings, (p) => {
-        const overall = Math.min(99, 85 + Math.round((p / 100) * 14));
-        setDownloadProgress((prev) => ({ ...prev, zip: overall }));
-        setBatchStatus((prev) => ({
-          ...prev,
-          percent: overall,
-        }));
-      });
+      const zipBlob = await createBatchZip(
+        files,
+        settings,
+        (zipPct) => {
+          setBatchStatus((prev) => ({
+            ...prev,
+            percent: 85 + Math.round(zipPct * 0.15),
+          }));
+        }
+      );
 
-      const formatLabel = chosenFormats.map((f) => f.toUpperCase()).join('_');
-      const zipName = `Suno_Batch_${tracks.length}_Tracks_${formatLabel}.zip`;
+      const zipName = `Suno_Batch_${tracks.length}_Tracks_${Date.now()}.zip`;
       triggerFileDownload(zipBlob, zipName);
 
-      setDownloadProgress((prev) => ({ ...prev, zip: 100 }));
-      setBatchStatus({
-        isActive: true,
-        totalTracks: tracks.length,
-        completedTracks: tracks.length,
-        currentTrackTitle: `Downloaded ${tracks.length} tracks as ZIP!`,
+      setBatchStatus((prev) => ({
+        ...prev,
         percent: 100,
         phase: 'done',
-        completedTrackIds: tracks.map(t => t.id),
-      });
-    } catch (err: any) {
-      if (err.message !== 'Batch download cancelled.') {
-        alert(`Batch ZIP creation failed: ${err.message || 'Unknown error'}`);
-        setBatchStatus((prev) => ({
-          ...prev,
-          phase: 'error',
-          error: err.message || 'Download failed',
-        }));
-      }
-    } finally {
+        completedTracks: tracks.length,
+      }));
+
       setTimeout(() => {
-        setActiveDownloadingFormat(null);
-        setDownloadProgress((prev) => {
-          const next = { ...prev };
-          delete next.zip;
-          return next;
-        });
-        setBatchStatus((prev) => {
-          if (prev.phase === 'done' || prev.phase === 'error') {
-            return {
-              ...prev,
-              isActive: false,
-            };
-          }
-          return prev;
-        });
-      }, 3500);
+        setBatchStatus((prev) => ({ ...prev, isActive: false }));
+      }, 3000);
+
+    } catch (err: any) {
+      if (err.message !== 'Batch download cancelled by user.') {
+        alert(`Batch download failed: ${err.message}`);
+      }
+      setBatchStatus((prev) => ({ ...prev, isActive: false, phase: 'error' }));
     }
+  };
+
+  const handleCancelBatchZip = () => {
+    batchAbortRef.current = true;
+    setBatchStatus((prev) => ({
+      ...prev,
+      phase: 'cancelled',
+      isActive: false,
+    }));
   };
 
   // Re-download directly from history
   const handleReDownloadHistory = async (entry: DownloadHistoryEntry) => {
     try {
-      const res = await fetch(`/api/suno/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: `https://suno.com/song/${entry.trackId}` }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.track) {
-          await handleDownloadTrack(data.track, entry.format);
-          return;
-        }
+      const track = allTracks.find((t) => t.id === entry.trackId);
+      if (track) {
+        await handleDownloadTrack(track, entry.format);
+        return;
       }
-      // Fallback direct download
       const dlUrl = `/api/suno/download?id=${encodeURIComponent(entry.trackId)}&format=${entry.format}&title=${encodeURIComponent(entry.trackTitle)}&artist=${encodeURIComponent(entry.artist)}`;
       const link = document.createElement('a');
       link.href = dlUrl;
@@ -545,34 +662,262 @@ export default function App() {
   };
 
   return (
-    <>
-      <SunoSongView
-        currentTrack={currentTrack}
-        currentPlaylist={currentPlaylist}
-        onFetchUrl={handleFetchUrl}
-        isLoadingUrl={isLoadingUrl}
-        errorMessage={errorMessage}
-        onReset={handleReset}
-        onDownloadTrack={handleDownloadTrack}
-        onDownloadBatchZip={handleDownloadBatchZip}
-        downloadProgress={downloadProgress}
-        activeDownloadingFormat={activeDownloadingFormat}
-        settings={settings}
-        onUpdateSettings={setSettings}
-        onSelectPlaylistTrack={(t) => setCurrentTrack(t)}
-        onOpenBulkImporter={() => setShowBulkImporter(true)}
+    <div className="min-h-screen bg-[#0d0d0f] text-neutral-100 font-sans selection:bg-[#ff2d55] selection:text-white">
+      
+      {/* Top Workstation Header Bar */}
+      <StudioHeader
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
         onOpenHistory={() => setShowHistory(true)}
         onOpenSettings={() => setShowSettings(true)}
-        onOpenTrimmer={() => setShowTrimmer(true)}
-        onOpenMetadataEditor={() => setShowMetadataEditor(true)}
         historyCount={history.length}
-        customMetadata={customMetadata}
-        clipRange={clipRange}
-        batchStatus={batchStatus}
-        onCancelBatchZip={handleCancelBatchZip}
+        offlineCount={offlineTrackIds.size}
       />
 
-      {/* Bulk URL Importer Modal */}
+      {/* Main Workstation Tab Views */}
+      <main className="w-full pb-36 md:pb-28">
+        {activeTab === 'explore' && (
+          <ExploreDiscoverView
+            playlists={playlists}
+            allTracks={allTracks}
+            activeTrack={currentTrack}
+            isPlaying={isPlaying}
+            onPlayTrack={handlePlaySpecificTrack}
+            onPlayPlaylist={(playlist) => {
+              setSelectedPlaylist(playlist);
+              if (playlist.tracks && playlist.tracks.length > 0) {
+                handlePlaySpecificTrack(playlist.tracks[0]);
+              }
+            }}
+            onSelectPlaylist={(playlist) => {
+              setSelectedPlaylist(playlist);
+              setActiveTab('playlist');
+            }}
+            onOpenStudioDaw={(track) => {
+              setCurrentTrack(track);
+              setActiveTab('studio');
+            }}
+            onOpenKaraoke={(track) => {
+              setCurrentTrack(track);
+              setShowKaraoke(true);
+            }}
+            onOpenSpatial8D={(track) => {
+              setCurrentTrack(track);
+              setShowSpatial8D(true);
+            }}
+            onQuickDownload={handleDownloadTrack}
+          />
+        )}
+
+        {activeTab === 'playlist' && (
+          <PlaylistDetailView
+            playlist={selectedPlaylist || playlists[0]}
+            allPlaylists={playlists}
+            activeTrack={currentTrack}
+            isPlaying={isPlaying}
+            onPlayTrack={handlePlaySpecificTrack}
+            onPlayPlaylist={(pl, startTrackId) => {
+              setSelectedPlaylist(pl);
+              if (startTrackId) {
+                const trk = pl.tracks.find((t) => t.id === startTrackId);
+                if (trk) handlePlaySpecificTrack(trk);
+              } else if (pl.tracks && pl.tracks.length > 0) {
+                handlePlaySpecificTrack(pl.tracks[0]);
+              }
+            }}
+            onSelectPlaylist={(pl) => {
+              setSelectedPlaylist(pl);
+            }}
+            onBack={() => setActiveTab('library')}
+            onOpenStudioDaw={(track) => {
+              setCurrentTrack(track);
+              setActiveTab('studio');
+            }}
+            onOpenKaraoke={(track) => {
+              setCurrentTrack(track);
+              setShowKaraoke(true);
+            }}
+            onOpenSpatial8D={(track) => {
+              setCurrentTrack(track);
+              setShowSpatial8D(true);
+            }}
+            onQuickDownload={handleDownloadTrack}
+            onDownloadBatchZip={handleDownloadBatchZip}
+            onOpenTrackMenu={(track) => {
+              setActionMenuTrack(track);
+              setShowTrackActionMenu(true);
+            }}
+            onSaveOffline={handleSaveTrackOffline}
+            offlineTrackIds={offlineTrackIds}
+          />
+        )}
+
+        {activeTab === 'library' && (
+          <MusicLibraryCratesView
+            allTracks={allTracks}
+            playlists={playlists}
+            activeTrack={currentTrack}
+            isPlaying={isPlaying}
+            onPlayTrack={handlePlaySpecificTrack}
+            onSelectPlaylist={(playlist) => {
+              setSelectedPlaylist(playlist);
+              setActiveTab('playlist');
+            }}
+            onOpenStudioDaw={(track) => {
+              setCurrentTrack(track);
+              setActiveTab('studio');
+            }}
+            onQuickDownload={handleDownloadTrack}
+            onDownloadBatchZip={handleDownloadBatchZip}
+            onOpenTrackMenu={(track) => {
+              setActionMenuTrack(track);
+              setShowTrackActionMenu(true);
+            }}
+            onOpenBulkImporter={() => setShowBulkImporter(true)}
+            onSaveOffline={handleSaveTrackOffline}
+            offlineTrackIds={offlineTrackIds}
+            onOpenAutoDjMixer={(tracks) => {
+              setShowAutoDj(true);
+            }}
+            onOpenTrimmer={(track) => {
+              setCurrentTrack(track);
+              setShowTrimmer(true);
+            }}
+            onOpenMetadataEditor={(track) => {
+              setCurrentTrack(track);
+              setShowMetadataEditor(true);
+            }}
+            onOpenPromptExtractor={(track) => {
+              setCurrentTrack(track);
+              setShowPromptExtractor(true);
+            }}
+          />
+        )}
+
+        {activeTab === 'studio' && (
+          <StudioDawWorkstationView
+            track={currentTrack}
+            allTracks={allTracks}
+            onSelectTrack={(t) => setCurrentTrack(t)}
+            onQuickDownload={handleDownloadTrack}
+            onOpenTrimmer={(t) => {
+              setCurrentTrack(t);
+              setShowTrimmer(true);
+            }}
+            onOpenMetadataEditor={(t) => {
+              setCurrentTrack(t);
+              setShowMetadataEditor(true);
+            }}
+            onOpenVideoMaker={(t) => {
+              setCurrentTrack(t);
+              setShowVideoMaker(true);
+            }}
+            onOpenKaraoke={(t) => {
+              setCurrentTrack(t);
+              setShowKaraoke(true);
+            }}
+            onOpenSpatial8D={(t) => {
+              setCurrentTrack(t);
+              setShowSpatial8D(true);
+            }}
+            onOpenMashup={(t) => {
+              setCurrentTrack(t);
+              setShowMashup(true);
+            }}
+            onSaveOffline={handleSaveTrackOffline}
+            isOffline={currentTrack ? offlineTrackIds.has(currentTrack.id) : false}
+            onBackToLibrary={() => setActiveTab('library')}
+            onOpenIngest={() => setActiveTab('ingest')}
+          />
+        )}
+
+        {activeTab === 'dj_creative' && (
+          <DjCreativeSuiteView
+            track={currentTrack}
+            allTracks={allTracks}
+            onOpenMashup={(t) => {
+              setCurrentTrack(t);
+              setShowMashup(true);
+            }}
+            onOpenAutoDj={() => setShowAutoDj(true)}
+            onOpenSpatial8D={(t) => {
+              setCurrentTrack(t);
+              setShowSpatial8D(true);
+            }}
+            onOpenKaraoke={(t) => {
+              setCurrentTrack(t);
+              setShowKaraoke(true);
+            }}
+            onOpenVideoMaker={(t) => {
+              setCurrentTrack(t);
+              setShowVideoMaker(true);
+            }}
+            onOpenPromptExtractor={(t) => {
+              setCurrentTrack(t);
+              setShowPromptExtractor(true);
+            }}
+            onOpenStudioDaw={(t) => {
+              setCurrentTrack(t);
+              setActiveTab('studio');
+            }}
+          />
+        )}
+
+        {activeTab === 'ingest' && (
+          <SunoCoreIngestView
+            onFetchUrl={handleFetchUrl}
+            isLoadingUrl={isLoadingUrl}
+            errorMessage={errorMessage}
+            onOpenBulkImporter={() => setShowBulkImporter(true)}
+            onOpenTrimmer={(t) => {
+              setCurrentTrack(t);
+              setShowTrimmer(true);
+            }}
+            onOpenMetadataEditor={(t) => {
+              setCurrentTrack(t);
+              setShowMetadataEditor(true);
+            }}
+            onOpenPromptExtractor={(t) => {
+              setCurrentTrack(t);
+              setShowPromptExtractor(true);
+            }}
+            onOpenStudioDaw={(t) => {
+              setCurrentTrack(t);
+              setActiveTab('studio');
+            }}
+            currentTrack={currentTrack}
+            onQuickDownload={handleDownloadTrack}
+            batchStatus={batchStatus}
+            onCancelBatchZip={handleCancelBatchZip}
+          />
+        )}
+
+        {activeTab === 'exports' && (
+          <ExportHubView
+            history={history}
+            onClearHistory={handleClearHistory}
+            onReDownload={handleReDownloadHistory}
+            onLoadTrack={(trackId) => handleFetchUrl(`https://suno.com/song/${trackId}`)}
+            onOpenStudioDaw={(track) => {
+              setCurrentTrack(track);
+              setActiveTab('studio');
+            }}
+            allTracks={allTracks}
+            onPlayTrack={handlePlaySpecificTrack}
+          />
+        )}
+      </main>
+
+      {/* Bottom Navigation for Mobile / Tablet */}
+      <Navigation
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        completedDownloadsCount={history.length}
+      />
+
+      {/* Modals & Slide-Overs */}
+      
+      {/* 1. Bulk Multi-URL Importer */}
       <MultiUrlImporterModal
         isOpen={showBulkImporter}
         onClose={() => setShowBulkImporter(false)}
@@ -580,13 +925,16 @@ export default function App() {
         onDownloadTrack={handleDownloadTrack}
         settings={settings}
         onSelectTrackForPlayer={(track) => {
+          setAllTracks(prev => {
+            if (prev.some(t => t.id === track.id)) return prev;
+            return [track, ...prev];
+          });
           setCurrentTrack(track);
-          setCurrentPlaylist(null);
-          setCustomMetadata({});
+          setActiveTab('studio');
         }}
       />
 
-      {/* Download History Slide-over Drawer */}
+      {/* 2. Download History Drawer */}
       <DownloadHistoryDrawer
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
@@ -595,24 +943,28 @@ export default function App() {
         onReDownload={handleReDownloadHistory}
         onLoadTrack={(trackId) => {
           handleFetchUrl(`https://suno.com/song/${trackId}`);
+          setShowHistory(false);
         }}
         autoClearEnabled={settings.autoClearHistory}
         autoClearDays={settings.autoClearHistoryDays}
       />
 
-      {/* Audio Trimmer & Ringtone Clipper Modal */}
+      {/* 3. Audio Trimmer & Ringtone Clipper */}
       {currentTrack && (
         <AudioTrimmerModal
           isOpen={showTrimmer}
           onClose={() => setShowTrimmer(false)}
           track={currentTrack}
           settings={settings}
-          onExportClip={handleExportClip}
+          onExportClip={(range) => {
+            handleDownloadTrack(currentTrack, 'mp3', range);
+            setShowTrimmer(false);
+          }}
           isExporting={isExportingClip}
         />
       )}
 
-      {/* ID3 Metadata Studio Modal */}
+      {/* 4. ID3 Metadata Studio */}
       {currentTrack && (
         <Id3MetadataEditorModal
           isOpen={showMetadataEditor}
@@ -623,7 +975,7 @@ export default function App() {
         />
       )}
 
-      {/* App & Audio Preferences Modal */}
+      {/* 5. App Settings & Audio Quality */}
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
@@ -632,6 +984,151 @@ export default function App() {
         historyCount={history.length}
         onClearHistory={handleClearHistory}
       />
-    </>
+
+      {/* 6. Song Mashup & Remixer Modal */}
+      {currentTrack && (
+        <SongMashupRemixerModal
+          isOpen={showMashup}
+          onClose={() => setShowMashup(false)}
+          trackA={currentTrack}
+          allTracks={allTracks}
+          settings={settings}
+        />
+      )}
+
+      {/* 8. Harmonic Auto-DJ Continuous Set Modal */}
+      <AutoDjMixerModal
+        isOpen={showAutoDj}
+        onClose={() => setShowAutoDj(false)}
+        playlist={null}
+        tracks={allTracks}
+        settings={settings}
+      />
+
+      {/* 9. 360° 8D Spatial Audio Modal */}
+      {currentTrack && (
+        <Spatial8DAudioModal
+          isOpen={showSpatial8D}
+          onClose={() => setShowSpatial8D(false)}
+          track={currentTrack}
+          settings={settings}
+        />
+      )}
+
+      {/* 10. Cinema Karaoke Teleprompter Modal */}
+      {currentTrack && (
+        <KaraokeTeleprompterModal
+          isOpen={showKaraoke}
+          onClose={() => setShowKaraoke(false)}
+          track={currentTrack}
+          settings={settings}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          onTogglePlay={toggleGlobalPlay}
+          onSeek={handleSeek}
+          onTrackUpdate={(updated) => {
+            setCurrentTrack(updated);
+            setAllTracks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+          }}
+        />
+      )}
+
+      {/* 11. Prompt & Style DNA Extractor Modal */}
+      {currentTrack && (
+        <PromptExtractorModal
+          isOpen={showPromptExtractor}
+          onClose={() => setShowPromptExtractor(false)}
+          track={currentTrack}
+        />
+      )}
+
+      {/* 12. Social Video Visualizer Maker Modal */}
+      {currentTrack && (
+        <SocialVideoMakerModal
+          isOpen={showVideoMaker}
+          onClose={() => setShowVideoMaker(false)}
+          track={currentTrack}
+          settings={settings}
+        />
+      )}
+
+      {/* 13. Track Action Menu */}
+      {actionMenuTrack && (
+        <TrackActionMenu
+          isOpen={showTrackActionMenu}
+          onClose={() => setShowTrackActionMenu(false)}
+          track={actionMenuTrack}
+          onDownloadFormat={(t, fmt) => {
+            handleDownloadTrack(t, fmt);
+            setShowTrackActionMenu(false);
+          }}
+          onDownloadLyrics={(t) => {
+            const blob = new Blob([t.prompt || ''], { type: 'text/plain' });
+            triggerFileDownload(blob, `${t.title}_lyrics.txt`);
+            setShowTrackActionMenu(false);
+          }}
+          onPlay={(t) => {
+            handlePlaySpecificTrack(t);
+            setShowTrackActionMenu(false);
+          }}
+          onCopyLink={(t) => {
+            navigator.clipboard.writeText(`https://suno.com/song/${t.id}`);
+            setShowTrackActionMenu(false);
+          }}
+        />
+      )}
+
+      {/* Spotify Bottom Player Bar (Hidden when full-screen Karaoke stage is open) */}
+      {!showKaraoke && (
+        <SpotifyPlayerBar
+          track={currentTrack}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          volume={volume}
+          isMuted={isMuted}
+          isShuffle={isShuffle}
+          repeatMode={repeatMode}
+          playbackRate={playbackRate}
+          allTracks={allTracks}
+          settings={settings}
+          onTogglePlay={toggleGlobalPlay}
+          onSeek={handleSeek}
+          onVolumeChange={handleVolumeChange}
+          onToggleMute={handleToggleMute}
+          onNextTrack={handleNextTrack}
+          onPrevTrack={handlePrevTrack}
+          onToggleShuffle={handleToggleShuffle}
+          onToggleRepeat={handleToggleRepeat}
+          onChangePlaybackRate={handleChangePlaybackRate}
+          onQuickDownload={handleDownloadTrack}
+          onOpenStudioDaw={(track) => {
+            setCurrentTrack(track);
+            setActiveTab('studio');
+          }}
+          onOpenKaraoke={(track) => {
+            setCurrentTrack(track);
+            setShowKaraoke(true);
+          }}
+          onOpenSpatial8D={(track) => {
+            setCurrentTrack(track);
+            setShowSpatial8D(true);
+          }}
+          onOpenDjCreative={() => {
+            setActiveTab('remix');
+          }}
+          onOpenVideoMaker={(track) => {
+            setCurrentTrack(track);
+            setShowVideoMaker(true);
+          }}
+          onTrackUpdate={(updated) => {
+            setCurrentTrack(updated);
+            setAllTracks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+          }}
+        />
+      )}
+
+    </div>
   );
 }
