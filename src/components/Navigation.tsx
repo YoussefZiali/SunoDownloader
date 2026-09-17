@@ -16,8 +16,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   completedDownloadsCount = 0,
 }) => {
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0d0d0f]/95 backdrop-blur-xl border-t border-neutral-800/90 px-1.5 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
-      <div className="flex items-center justify-around max-w-md mx-auto">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0d0d0f]/95 backdrop-blur-xl border-t border-neutral-800/90 px-1.5 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-2xl">
+      <div className="flex items-center justify-around max-w-md sm:max-w-lg md:max-w-2xl mx-auto">
         
         {/* Tab 0: Explore */}
         <button
@@ -75,7 +75,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           <span className="text-[10px] font-bold mt-0.5">DJ Creative</span>
         </button>
 
-        {/* Tab 4: Suno Ingest */}
+        {/* Tab 4: Download */}
         <button
           id="nav-ingest-tab"
           onClick={() => onChangeTab('ingest')}
@@ -86,7 +86,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           }`}
         >
           <Zap className={`w-5 h-5 ${activeTab === 'ingest' ? 'stroke-[2.5] fill-amber-400' : 'stroke-2'}`} />
-          <span className="text-[10px] font-bold mt-0.5">Ingest</span>
+          <span className="text-[10px] font-bold mt-0.5">Download</span>
         </button>
 
         {/* Tab 5: Exports */}

@@ -3,7 +3,7 @@ import {
   Search, SlidersHorizontal, Play, Pause, Download, MoreVertical, 
   Sparkles, Music, Disc, Layers, HardDrive, CheckCircle2, 
   FolderPlus, Radio, ArrowUpDown, Tag, Zap, Wand2, Scissors, 
-  FileText, Activity, Mic, Orbit, Heart, Plus, ChevronRight
+  FileText, Activity, Mic, Orbit, Heart, Plus, ChevronRight, RefreshCw
 } from 'lucide-react';
 import { SunoTrack, AudioFormat, SunoPlaylist, LibraryFilterState } from '../types';
 import { estimateMusicAttributes } from '../utils/musicAnalyzer';
@@ -13,6 +13,8 @@ interface MusicLibraryCratesViewProps {
   playlists: SunoPlaylist[];
   activeTrack: SunoTrack | null;
   isPlaying: boolean;
+  isLoadingAudio?: boolean;
+  loadingTrackId?: string | null;
   onPlayTrack: (track: SunoTrack) => void;
   onSelectPlaylist?: (playlist: SunoPlaylist) => void;
   onOpenStudioDaw: (track: SunoTrack) => void;
@@ -59,6 +61,8 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
   playlists,
   activeTrack,
   isPlaying,
+  isLoadingAudio = false,
+  loadingTrackId = null,
   onPlayTrack,
   onSelectPlaylist,
   onOpenStudioDaw,
@@ -696,6 +700,7 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
           <div className="space-y-2.5">
             {filteredTracks.map((track) => {
               const isThisPlaying = isPlaying && activeTrack?.id === track.id;
+              const isThisBuffering = (loadingTrackId === track.id && isLoadingAudio) || (activeTrack?.id === track.id && isLoadingAudio);
               const isSelected = selectedTrackIds.has(track.id);
               const isOffline = offlineTrackIds.has(track.id);
 
@@ -732,17 +737,23 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
                     {/* Artwork with Play Overlay */}
                     <div
                       onClick={() => onPlayTrack(track)}
-                      className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-neutral-800 shrink-0 cursor-pointer shadow-sm group-hover:shadow"
+                      className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-neutral-800 shrink-0 cursor-pointer shadow-sm group-hover:shadow transition-all ${
+                        isThisBuffering ? 'ring-2 ring-pink-500 shadow-pink-500/30' : ''
+                      }`}
                     >
                       <img
                         src={track.image_url}
                         alt={track.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
+                          isThisBuffering ? 'scale-105 opacity-80' : ''
+                        }`}
                       />
                       <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${
-                        isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        isThisBuffering || isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}>
-                        {isThisPlaying ? (
+                        {isThisBuffering ? (
+                          <RefreshCw className="w-5 h-5 text-white animate-spin" />
+                        ) : isThisPlaying ? (
                           <Pause className="w-5 h-5 text-white fill-white" />
                         ) : (
                           <Play className="w-5 h-5 text-white fill-white translate-x-0.5" />
@@ -764,6 +775,12 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
                         >
                           {track.title}
                         </h4>
+                        {isThisBuffering && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-pink-500/20 text-pink-300 border border-pink-500/40 animate-pulse shrink-0 flex items-center gap-1">
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-pink-400" />
+                            <span>Buffering</span>
+                          </span>
+                        )}
                         {track.model && (
                           <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-neutral-800 text-neutral-400 border border-neutral-700 shrink-0">
                             {track.model}
@@ -822,13 +839,13 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
                   </div>
 
                   {/* Right: Studio DAW Launcher & Action Triggers */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                     
-                    {/* Primary Button: Open in Studio DAW */}
+                    {/* Primary Button: Open in Studio DAW (desktop only to save space on mobile) */}
                     <button
                       onClick={() => onOpenStudioDaw(track)}
                       title="Open full mastering DAW workstation for this track"
-                      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-[#ff2d55] text-neutral-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm group/btn"
+                      className="hidden sm:flex px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-[#ff2d55] text-neutral-200 hover:text-white text-xs font-bold transition-all items-center gap-1.5 cursor-pointer shadow-sm group/btn"
                     >
                       <SlidersHorizontal className="w-3.5 h-3.5 text-[#ff2d55] group-hover/btn:text-white transition-colors" />
                       <span className="hidden lg:inline">DAW Studio</span>
@@ -843,11 +860,11 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
                       <Download className="w-4 h-4" />
                     </button>
 
-                    {/* Offline Save Toggle */}
+                    {/* Offline Save Toggle (Desktop/Tablet) */}
                     <button
                       onClick={() => onSaveOffline(track)}
                       title={isOffline ? "Saved Offline" : "Save to Offline Storage"}
-                      className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                      className={`hidden sm:flex p-2 rounded-xl border transition-colors cursor-pointer ${
                         isOffline
                           ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
                           : 'bg-neutral-950 hover:bg-neutral-800 border-neutral-800 text-neutral-500 hover:text-neutral-300'
@@ -856,7 +873,7 @@ export const MusicLibraryCratesView: React.FC<MusicLibraryCratesViewProps> = ({
                       <HardDrive className="w-4 h-4" />
                     </button>
 
-                    {/* More Action Menu Trigger */}
+                    {/* More Action Menu Trigger (Dropdown menu with all tools) */}
                     <button
                       onClick={() => onOpenTrackMenu(track)}
                       title="More Tools (Stems, Chords, DJ, Karaoke)"

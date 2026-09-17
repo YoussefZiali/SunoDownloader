@@ -53,33 +53,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-xl p-2.5 sm:p-4 text-white">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-2xl p-0 md:p-4 lg:p-6 text-white">
       <div 
-        className="w-full max-w-lg bg-[#0e0f14] border border-neutral-800 rounded-3xl shadow-2xl max-h-[85vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="w-full h-full md:h-auto md:max-h-[90vh] max-w-lg bg-[#0e0f14] md:border border-neutral-800 md:rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
         id="settings-modal"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/40 shrink-0">
+        {/* Sticky Header with Safe-Area Inset */}
+        <div className="sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/95 backdrop-blur-xl shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#ff2d55]/20 to-amber-500/20 border border-[#ff2d55]/30 flex items-center justify-center text-[#ff2d55] shrink-0">
-              <Sliders className="w-4 h-4" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-[#ff2d55]/20 to-amber-500/20 border border-[#ff2d55]/30 flex items-center justify-center text-[#ff2d55] shrink-0">
+              <Sliders className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base font-bold text-white tracking-tight truncate">Preferences & Settings</h2>
+              <h2 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">Preferences & Settings</h2>
               <p className="text-xs text-neutral-400 truncate">Audio formats, bit depth, and export options</p>
             </div>
           </div>
           <button
             id="close-settings-btn"
             onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center transition-colors text-neutral-400 hover:text-white shrink-0 cursor-pointer"
+            aria-label="Close Settings"
+            className="p-2 sm:p-2.5 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white transition-all shrink-0 cursor-pointer shadow-md flex items-center justify-center border border-neutral-700 active:scale-95"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="overflow-y-auto px-6 py-5 space-y-6 flex-1 text-sm">
+        <div className="overflow-y-auto px-4 sm:px-6 py-5 space-y-6 flex-1 text-sm pb-[max(2rem,env(safe-area-inset-bottom))]">
           
           {/* Section: Preferred File Format */}
           <div>

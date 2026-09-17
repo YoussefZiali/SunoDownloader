@@ -130,20 +130,20 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-xl p-2.5 sm:p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-2xl p-0 md:p-4 lg:p-6">
       <div 
-        className="w-full max-w-2xl bg-[#0e0f13] border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[88vh] animate-in fade-in zoom-in-95 duration-200"
+        className="w-full h-full md:h-auto md:max-h-[90vh] max-w-2xl bg-[#0e0f13] md:border border-neutral-800 md:rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200"
         id="multi-url-modal"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/50 shrink-0">
-          <div className="flex items-center gap-3">
+        {/* Sticky Header with Safe-Area Inset */}
+        <div className="sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/95 backdrop-blur-xl shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#ff2d55]/20 to-amber-500/20 border border-[#ff2d55]/30 flex items-center justify-center text-[#ff2d55] shrink-0">
               <Layers className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white tracking-tight truncate">Bulk URL Importer</h2>
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">Bulk URL Importer</h2>
                 <span className="hidden sm:inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700">
                   Batch Mode
                 </span>
@@ -153,14 +153,15 @@ export const MultiUrlImporterModal: React.FC<MultiUrlImporterModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center text-neutral-400 hover:text-white transition-colors shrink-0"
+            aria-label="Close Importer"
+            className="p-2 sm:p-2.5 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white transition-all shrink-0 cursor-pointer shadow-md flex items-center justify-center border border-neutral-700 active:scale-95"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+        <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar pb-[max(2rem,env(safe-area-inset-bottom))]">
           {/* URL Input Area */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

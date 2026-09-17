@@ -503,8 +503,12 @@ async function fetchTrackData(trackId: string): Promise<any> {
     // continue
   }
 
-  // 2. Try Suno embed page JSON extraction
-  if (!clipData) {
+  const hasPrompt = (c: any) => Boolean(
+    c?.metadata?.prompt || c?.prompt || c?.metadata?.lyrics || c?.lyrics || c?.metadata?.gpt_description_prompt
+  );
+
+  // 2. Try Suno embed page JSON extraction (if missing clipData or clipData lacks lyrics/prompt)
+  if (!clipData || !hasPrompt(clipData)) {
     try {
       const embedRes = await fetch(`https://suno.com/embed/${trackId}`, {
         headers: {
@@ -541,7 +545,13 @@ async function fetchTrackData(trackId: string): Promise<any> {
           if (endIdx !== -1) {
             const rawEscaped = sub.slice(0, endIdx);
             const unescaped = rawEscaped.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-            clipData = JSON.parse(unescaped);
+            const embedClip = JSON.parse(unescaped);
+            if (clipData) {
+              clipData.prompt = clipData.prompt || embedClip.prompt || embedClip.metadata?.prompt;
+              clipData.metadata = { ...embedClip.metadata, ...clipData.metadata };
+            } else {
+              clipData = embedClip;
+            }
           }
         }
       }
@@ -550,8 +560,8 @@ async function fetchTrackData(trackId: string): Promise<any> {
     }
   }
 
-  // 3. Fallback: Parse meta tags from song page
-  if (!clipData) {
+  // 3. Fallback: Parse meta tags & hydration data from song page
+  if (!clipData || !hasPrompt(clipData)) {
     try {
       const songRes = await fetch(`https://suno.com/song/${trackId}`, {
         headers: {
@@ -560,6 +570,37 @@ async function fetchTrackData(trackId: string): Promise<any> {
       });
       if (songRes.ok) {
         const html = await songRes.text();
+
+        // Check for __NEXT_DATA__
+        const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+        if (nextDataMatch) {
+          try {
+            const nextData = JSON.parse(nextDataMatch[1]);
+            const clip = nextData?.props?.pageProps?.clip 
+              || nextData?.props?.pageProps?.initialState?.clip
+              || nextData?.props?.pageProps?.track;
+            if (clip) {
+              if (clipData) {
+                clipData.prompt = clipData.prompt || clip.prompt || clip.metadata?.prompt;
+                clipData.metadata = { ...clip.metadata, ...clipData.metadata };
+              } else {
+                clipData = clip;
+              }
+            }
+          } catch {}
+        }
+
+        // Check for prompt in page script/JSON
+        let promptFromHtml = '';
+        const promptMatch = html.match(/"prompt"\s*:\s*"((?:\\.|[^"\\])*)"/i);
+        if (promptMatch) {
+          try {
+            promptFromHtml = JSON.parse(`"${promptMatch[1]}"`);
+          } catch {
+            promptFromHtml = promptMatch[1];
+          }
+        }
+
         const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i);
         const descMatch = html.match(/<meta name="description" content="([^"]+)"/i);
         const imageMatch = html.match(/<meta property="og:image" content="([^"]+)"/i);
@@ -574,14 +615,21 @@ async function fetchTrackData(trackId: string): Promise<any> {
           }
         }
 
-        clipData = {
-          id: trackId,
-          title: titleMatch ? titleMatch[1] : `Suno Track ${trackId.slice(0, 8)}`,
-          display_name: artist,
-          handle: handle.replace('@', ''),
-          image_large_url: imageMatch ? imageMatch[1] : `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
-          duration: 180,
-        };
+        if (clipData) {
+          if (promptFromHtml && !clipData.prompt && !clipData.metadata?.prompt) {
+            clipData.prompt = promptFromHtml;
+          }
+        } else {
+          clipData = {
+            id: trackId,
+            title: titleMatch ? titleMatch[1] : `Suno Track ${trackId.slice(0, 8)}`,
+            display_name: artist,
+            handle: handle.replace('@', ''),
+            image_large_url: imageMatch ? imageMatch[1] : `https://cdn2.suno.ai/image_large_${trackId}.jpeg`,
+            duration: 180,
+            prompt: promptFromHtml,
+          };
+        }
       }
     } catch {
       // continue

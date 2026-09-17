@@ -19,6 +19,8 @@ import {
 export interface SpotifyPlayerBarProps {
   track: SunoTrack | null;
   isPlaying: boolean;
+  isLoadingAudio?: boolean;
+  loadingTrackId?: string | null;
   currentTime: number;
   duration: number;
   volume: number;
@@ -50,6 +52,8 @@ export interface SpotifyPlayerBarProps {
 export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
   track,
   isPlaying,
+  isLoadingAudio = false,
+  loadingTrackId = null,
   currentTime,
   duration,
   volume,
@@ -91,6 +95,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
   const [lyricsLines, setLyricsLines] = useState<KaraokeLyricLine[]>([]);
   const [isFetchingLyrics, setIsFetchingLyrics] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState(false);
+  const [fetchNotice, setFetchNotice] = useState<string | null>(null);
   const [karaokeMicActive, setKaraokeMicActive] = useState(false);
   const [karaokeVocalFilter, setKaraokeVocalFilter] = useState(false);
 
@@ -99,6 +104,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
   const dockActiveLineRef = useRef<HTMLDivElement>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const lastAutoFetchedTrackIdRef = useRef<string | null>(null);
 
   // Sync liked songs in local storage
   useEffect(() => {
@@ -164,32 +170,73 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleFetchLyricsOnline = async (e?: React.MouseEvent) => {
+  // Automatically fetch lyrics from Suno servers
+  const handleFetchLyricsOnline = async (targetTrack?: SunoTrack, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!track) return;
+    const activeT = targetTrack || track;
+    if (!activeT) return;
     setIsFetchingLyrics(true);
     setFetchSuccess(false);
+    setFetchNotice(null);
 
     try {
-      const data = await fetchTrackLyrics(track.id);
+      const data = await fetchTrackLyrics(activeT.id);
       if (data.rawLyrics || (data.structuredLines && data.structuredLines.length > 0)) {
         const updatedTrack: SunoTrack = {
-          ...track,
-          prompt: data.rawLyrics || track.prompt,
+          ...activeT,
+          prompt: data.rawLyrics || activeT.prompt,
         };
         setLyricsLines(data.structuredLines || parseAndSyncLyrics(updatedTrack));
         if (onTrackUpdate) {
           onTrackUpdate(updatedTrack);
         }
         setFetchSuccess(true);
-        setTimeout(() => setFetchSuccess(false), 2500);
+        lastAutoFetchedTrackIdRef.current = activeT.id;
+        if (!data.hasLyrics && (!data.rawLyrics || !data.rawLyrics.trim())) {
+          setFetchNotice('Instrumental track confirmed - synchronized instrumental timeline active.');
+        } else {
+          setFetchNotice('Lyrics retrieved and synchronized successfully!');
+        }
+        setTimeout(() => {
+          setFetchSuccess(false);
+          setFetchNotice(null);
+        }, 3500);
       }
     } catch (err) {
       console.warn('Could not retrieve lyrics online:', err);
+      setFetchNotice('Could not retrieve lyrics from Suno servers.');
+      setTimeout(() => setFetchNotice(null), 4000);
     } finally {
       setIsFetchingLyrics(false);
     }
   };
+
+  // Click handler for Lyrics button: automatically opens dock AND retrieves lyrics immediately
+  const handleLyricsButtonClick = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!showLyricsDock) {
+      setShowLyricsDock(true);
+      // Automatically retrieve lyrics immediately when user clicks the lyrics button
+      handleFetchLyricsOnline(track);
+    } else {
+      // If dock is already open but lyrics are not yet loaded or only placeholder, re-retrieve instead of closing
+      const isPlaceholder = lyricsLines.length <= 1 && (!track.prompt || !track.prompt.trim());
+      if (isPlaceholder && !isFetchingLyrics) {
+        handleFetchLyricsOnline(track);
+      } else {
+        setShowLyricsDock(false);
+      }
+    }
+  };
+
+  // Automatically retrieve lyrics when track changes while lyrics dock is open
+  useEffect(() => {
+    if (!track?.id) return;
+    if (showLyricsDock && lastAutoFetchedTrackIdRef.current !== track.id) {
+      lastAutoFetchedTrackIdRef.current = track.id;
+      handleFetchLyricsOnline(track);
+    }
+  }, [showLyricsDock, track?.id]);
 
   const toggleSingAlongMic = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -283,14 +330,30 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-800/80 bg-neutral-900/60 backdrop-blur-md">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-lg bg-pink-500/20 text-pink-400 border border-pink-500/30 flex items-center justify-center shrink-0">
-                <Mic2 className="w-4 h-4" />
+                {isFetchingLyrics ? (
+                  <RefreshCw className="w-4 h-4 animate-spin text-pink-400" />
+                ) : (
+                  <Mic2 className="w-4 h-4" />
+                )}
               </div>
               <div className="min-w-0">
                 <h4 className="text-xs font-bold text-white flex items-center gap-1.5 truncate">
                   <span>Synced Lyrics & Karaoke</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-mono">
-                    {analysis.camelot}
-                  </span>
+                  {isFetchingLyrics ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-medium flex items-center gap-1 animate-pulse">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                      Retrieving...
+                    </span>
+                  ) : fetchSuccess ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium flex items-center gap-1">
+                      <Check className="w-2.5 h-2.5" />
+                      Synced
+                    </span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-mono">
+                      {analysis.camelot}
+                    </span>
+                  )}
                 </h4>
                 <p className="text-[11px] text-neutral-400 truncate">{track.title} &bull; {track.artist}</p>
               </div>
@@ -300,9 +363,9 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
             <div className="flex items-center gap-1">
               {/* Retrieve Suno Lyrics */}
               <button
-                onClick={handleFetchLyricsOnline}
+                onClick={(e) => handleFetchLyricsOnline(track, e)}
                 disabled={isFetchingLyrics}
-                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
                 title="Retrieve latest lyrics from Suno"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isFetchingLyrics ? 'animate-spin text-pink-400' : ''}`} />
@@ -311,7 +374,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
               {/* Sing-Along Mic */}
               <button
                 onClick={toggleSingAlongMic}
-                className={`p-1.5 rounded-lg transition-colors ${
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                   karaokeMicActive 
                     ? 'text-pink-400 bg-pink-500/20 border border-pink-500/40 animate-pulse' 
                     : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
@@ -327,7 +390,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                   setShowLyricsDock(false);
                   onOpenKaraoke(track);
                 }}
-                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
                 title="Open Fullscreen Teleprompter Stage"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
@@ -336,12 +399,25 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
               {/* Close Dock */}
               <button
                 onClick={() => setShowLyricsDock(false)}
-                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           </div>
+
+          {/* Optional notification / feedback pill */}
+          {fetchNotice && (
+            <div className="px-4 py-2 bg-pink-950/40 border-b border-pink-500/20 flex items-center justify-between text-[11px] text-pink-300">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3 text-pink-400 shrink-0" />
+                <span>{fetchNotice}</span>
+              </div>
+              <button onClick={() => setFetchNotice(null)} className="text-pink-400/60 hover:text-pink-300">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
 
           {/* Synchronized Lyrics Scrolling Body */}
           <div 
@@ -349,7 +425,20 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
             className="flex-1 overflow-y-auto px-6 py-8 space-y-5 text-center custom-scrollbar selection:bg-pink-500 selection:text-white"
           >
             {/* Top Spacer */}
-            <div className="h-16" />
+            <div className="h-10" />
+
+            {/* Loading Banner when actively retrieving lyrics */}
+            {isFetchingLyrics && lyricsLines.length <= 1 && (
+              <div className="mx-auto max-w-xs my-6 p-4 rounded-2xl bg-pink-500/10 border border-pink-500/30 text-center space-y-2 animate-pulse">
+                <div className="w-10 h-10 rounded-full bg-pink-500/20 text-pink-400 flex items-center justify-center mx-auto">
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">Retrieving Lyrics from Suno...</p>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">Fetching prompt metadata and synchronizing timing lines</p>
+                </div>
+              </div>
+            )}
 
             {lyricsLines.map((line, idx) => {
               const isActive = idx === activeLineIndex;
@@ -377,6 +466,23 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                 </div>
               );
             })}
+
+            {/* If only 1 line or instrumental, give user a quick button to re-fetch online lyrics */}
+            {lyricsLines.length <= 1 && !isFetchingLyrics && (
+              <div className="mx-auto max-w-xs my-4 p-4 rounded-2xl bg-neutral-900/90 border border-neutral-800 text-center space-y-2">
+                <div className="w-8 h-8 rounded-full bg-pink-500/20 text-pink-400 flex items-center justify-center mx-auto">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <p className="text-xs text-neutral-400">Want full synchronized lyrics for this song?</p>
+                <button
+                  onClick={(e) => handleFetchLyricsOnline(track, e)}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-600 text-white font-bold text-xs shadow-md shadow-pink-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5 mx-auto cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Fetch Suno Lyrics</span>
+                </button>
+              </div>
+            )}
 
             {/* Bottom Spacer */}
             <div className="h-24" />
@@ -419,31 +525,48 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
       {/* ================= 2. SPOTIFY DESKTOP PLAYER BAR ================= */}
       <footer 
         id="spotify-bottom-player-desktop"
-        className="hidden md:flex fixed bottom-0 left-0 right-0 z-50 h-[88px] bg-[#121216]/98 backdrop-blur-2xl border-t border-[#24242c] px-4 lg:px-6 items-center justify-between text-neutral-200 select-none shadow-2xl transition-all"
+        className="hidden lg:flex fixed bottom-0 left-0 right-0 z-50 h-[88px] bg-[#121216]/98 backdrop-blur-2xl border-t border-[#24242c] px-4 lg:px-6 items-center justify-between text-neutral-200 select-none shadow-2xl transition-all"
         style={{ boxShadow: '0 -8px 24px -4px rgba(0, 0, 0, 0.6)' }}
       >
         {/* Top Glowing Micro-Progress Line */}
-        <div className="absolute top-0 left-0 right-0 h-[2px] bg-neutral-800">
-          <div 
-            className="h-full bg-gradient-to-r from-[#ff2d55] via-rose-500 to-amber-500 transition-all duration-150"
-            style={{ width: `${progressPercent}%` }}
-          />
+        <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-neutral-800 overflow-hidden">
+          {isLoadingAudio ? (
+            <div className="h-full w-full animate-stream-loader shadow-lg shadow-pink-500/50" />
+          ) : (
+            <div 
+              className="h-full bg-gradient-to-r from-[#ff2d55] via-rose-500 to-amber-500 transition-all duration-150"
+              style={{ width: `${progressPercent}%` }}
+            />
+          )}
         </div>
 
         {/* ---------------- LEFT: TRACK INFO & METRICS ---------------- */}
         <div className="flex items-center gap-3.5 w-[30%] min-w-[220px] max-w-[380px]">
           {/* Artwork Thumbnail */}
           <div 
-            className="relative w-14 h-14 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-neutral-700/60 group shadow-md cursor-pointer"
+            className={`relative w-14 h-14 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border group shadow-md cursor-pointer transition-all ${
+              isLoadingAudio ? 'border-pink-500/60 shadow-pink-500/30' : 'border-neutral-700/60'
+            }`}
             onClick={() => onOpenStudioDaw(track)}
             title="Open in Studio DAW"
           >
             <img 
               src={track.image_url} 
               alt={track.title} 
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" 
+              className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
+                isLoadingAudio ? 'scale-105 opacity-80' : ''
+              }`} 
             />
-            {isPlaying && (
+            {isLoadingAudio ? (
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1 z-10">
+                <div className="flex items-end gap-1 h-3.5">
+                  <span className="w-1 bg-[#ff2d55] rounded-full mini-equalizer-bar-1" />
+                  <span className="w-1 bg-rose-400 rounded-full mini-equalizer-bar-2" />
+                  <span className="w-1 bg-amber-400 rounded-full mini-equalizer-bar-3" />
+                </div>
+                <span className="text-[8px] font-mono font-extrabold text-pink-300 tracking-wider">LOADING</span>
+              </div>
+            ) : isPlaying ? (
               <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
                 <div className="flex items-end gap-1 h-4">
                   <span className="w-1 bg-[#ff2d55] rounded-full animate-bounce h-3" />
@@ -451,7 +574,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                   <span className="w-1 bg-amber-400 rounded-full animate-bounce h-2 delay-150" />
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
 
           {/* Title, Artist, Camelot & BPM Badges */}
@@ -464,6 +587,12 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
               >
                 {track.title}
               </h4>
+              {isLoadingAudio && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-mono font-bold bg-pink-500/20 text-pink-300 rounded-full border border-pink-500/40 animate-pulse shrink-0">
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin text-pink-400" />
+                  <span>Buffering...</span>
+                </span>
+              )}
             </div>
             
             <p className="text-xs text-neutral-400 truncate mt-0.5">
@@ -524,14 +653,20 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
               <SkipBack className="w-5 h-5 fill-current" />
             </button>
 
-            {/* Play / Pause Primary Button */}
+            {/* Play / Pause Primary Button with Buffering Animation */}
             <button
               id="spotify-player-play-btn"
               onClick={onTogglePlay}
-              className="w-10 h-10 rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg cursor-pointer"
-              title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+              className={`w-10 h-10 rounded-full transition-all flex items-center justify-center shadow-lg cursor-pointer ${
+                isLoadingAudio
+                  ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 text-white animate-player-buffering shadow-pink-500/50'
+                  : 'bg-white text-black hover:scale-105 active:scale-95'
+              }`}
+              title={isLoadingAudio ? 'Loading audio stream...' : isPlaying ? 'Pause (Space)' : 'Play (Space)'}
             >
-              {isPlaying ? (
+              {isLoadingAudio ? (
+                <RefreshCw className="w-5 h-5 text-white animate-spin" />
+              ) : isPlaying ? (
                 <Pause className="w-5 h-5 fill-black" />
               ) : (
                 <Play className="w-5 h-5 fill-black translate-x-0.5" />
@@ -563,7 +698,9 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
 
           {/* Scrubber & Time Display */}
           <div className="w-full flex items-center gap-3 text-xs font-mono text-neutral-400">
-            <span className="w-10 text-right tabular-nums">{formatTime(currentTime)}</span>
+            <span className="w-10 text-right tabular-nums">
+              {isLoadingAudio && currentTime === 0 ? '--:--' : formatTime(currentTime)}
+            </span>
             
             <div 
               ref={scrubberRef}
@@ -574,11 +711,15 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
               className="relative flex-1 h-3 flex items-center group cursor-pointer"
             >
               {/* Background Track */}
-              <div className="w-full h-1 bg-neutral-700/80 rounded-full overflow-hidden group-hover:h-1.5 transition-all">
-                <div 
-                  className="h-full bg-gradient-to-r from-rose-500 to-[#ff2d55] rounded-full group-hover:bg-gradient-to-r group-hover:from-rose-400 group-hover:to-pink-400"
-                  style={{ width: `${progressPercent}%` }}
-                />
+              <div className="w-full h-1 bg-neutral-700/80 rounded-full overflow-hidden group-hover:h-1.5 transition-all relative">
+                {isLoadingAudio ? (
+                  <div className="absolute inset-0 animate-stream-loader" />
+                ) : (
+                  <div 
+                    className="h-full bg-gradient-to-r from-rose-500 to-[#ff2d55] rounded-full group-hover:bg-gradient-to-r group-hover:from-rose-400 group-hover:to-pink-400"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                )}
               </div>
 
               {/* Progress Knob */}
@@ -608,16 +749,23 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
           {/* 1. SYNCED LYRICS & KARAOKE TOGGLE */}
           <button
             id="spotify-player-lyrics-btn"
-            onClick={() => setShowLyricsDock(!showLyricsDock)}
-            className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${
+            onClick={handleLyricsButtonClick}
+            disabled={isFetchingLyrics}
+            className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer select-none ${
               showLyricsDock 
                 ? 'bg-gradient-to-r from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/30' 
                 : 'text-neutral-300 hover:text-white hover:bg-neutral-800/80'
             }`}
-            title="Toggle Live Synced Lyrics & Karaoke"
+            title="Toggle Live Synced Lyrics & Karaoke (Automatically retrieves lyrics from Suno)"
           >
-            <Mic2 className="w-4 h-4 text-pink-400" />
-            <span className="hidden xl:inline">Lyrics</span>
+            {isFetchingLyrics ? (
+              <RefreshCw className="w-4 h-4 text-pink-300 animate-spin" />
+            ) : (
+              <Mic2 className="w-4 h-4 text-pink-400" />
+            )}
+            <span className="hidden xl:inline">
+              {isFetchingLyrics ? 'Retrieving...' : 'Lyrics'}
+            </span>
           </button>
 
           {/* 2. 360° 8D SPATIAL AUDIO */}
@@ -793,18 +941,24 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
         </div>
       </footer>
 
-      {/* ================= 3. SPOTIFY MOBILE COMPACT BAR ================= */}
+      {/* ================= 3. SPOTIFY MOBILE & TABLET COMPACT BAR ================= */}
       <div 
         id="spotify-mobile-floating-player"
         onClick={() => setIsExpandedMobile(true)}
-        className="md:hidden fixed bottom-[64px] left-2 right-2 z-40 bg-[#16161c]/95 backdrop-blur-xl border border-neutral-700/70 rounded-2xl p-2 shadow-2xl flex items-center justify-between gap-3 text-white animate-in slide-in-from-bottom-2 duration-150 cursor-pointer select-none"
+        className={`lg:hidden fixed bottom-[64px] left-2 right-2 sm:left-4 sm:right-4 md:max-w-2xl md:mx-auto md:left-0 md:right-0 z-40 bg-[#16161c]/95 backdrop-blur-xl border rounded-2xl p-2 sm:p-2.5 shadow-2xl flex items-center justify-between gap-3 text-white animate-in slide-in-from-bottom-2 duration-150 cursor-pointer select-none transition-colors ${
+          isLoadingAudio ? 'border-pink-500/50 shadow-pink-500/20' : 'border-neutral-700/70'
+        }`}
       >
         {/* Micro Progress Line on Top of Mobile Bar */}
         <div className="absolute top-0 left-3 right-3 h-[2px] bg-neutral-800 rounded-full overflow-hidden">
-          <div 
-            className="h-full bg-[#ff2d55] transition-all duration-150"
-            style={{ width: `${progressPercent}%` }}
-          />
+          {isLoadingAudio ? (
+            <div className="h-full w-full animate-stream-loader" />
+          ) : (
+            <div 
+              className="h-full bg-[#ff2d55] transition-all duration-150"
+              style={{ width: `${progressPercent}%` }}
+            />
+          )}
         </div>
 
         {/* Artwork + Title */}
@@ -813,9 +967,13 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
             <img 
               src={track.image_url} 
               alt={track.title} 
-              className="w-full h-full object-cover" 
+              className={`w-full h-full object-cover ${isLoadingAudio ? 'scale-110 opacity-75' : ''}`} 
             />
-            {isPlaying && (
+            {isLoadingAudio ? (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <RefreshCw className="w-4 h-4 text-pink-400 animate-spin" />
+              </div>
+            ) : isPlaying ? (
               <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                 <div className="flex items-end gap-[2px] h-3">
                   <span className="w-0.5 bg-white animate-bounce h-2" />
@@ -823,10 +981,17 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                   <span className="w-0.5 bg-white animate-bounce h-1.5 delay-150" />
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
           <div className="min-w-0 flex-1">
-            <h4 className="font-bold text-xs text-white truncate">{track.title}</h4>
+            <div className="flex items-center gap-1.5">
+              <h4 className="font-bold text-xs text-white truncate">{track.title}</h4>
+              {isLoadingAudio && (
+                <span className="px-1.5 py-0.2 rounded-full text-[8px] font-mono font-bold bg-pink-500/30 text-pink-300 border border-pink-500/40 animate-pulse shrink-0">
+                  Buffering
+                </span>
+              )}
+            </div>
             <p className="text-[11px] text-neutral-400 truncate">{track.artist} • {analysis.camelot}</p>
           </div>
         </div>
@@ -834,11 +999,20 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
         {/* Mobile Quick Action Buttons */}
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
-            onClick={() => onOpenKaraoke(track)}
+            id="spotify-mobile-lyrics-btn"
+            onClick={() => {
+              setIsExpandedMobile(true);
+              setMobileTab('lyrics');
+              handleFetchLyricsOnline(track);
+            }}
             className="p-2 rounded-full text-pink-400 active:scale-75 transition-transform"
-            title="Lyrics & Karaoke"
+            title="Lyrics & Karaoke (Automatically retrieves lyrics)"
           >
-            <Mic2 className="w-4 h-4" />
+            {isFetchingLyrics ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-pink-400" />
+            ) : (
+              <Mic2 className="w-4 h-4" />
+            )}
           </button>
 
           <button
@@ -852,9 +1026,13 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
 
           <button
             onClick={onTogglePlay}
-            className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center shadow active:scale-90 transition-all"
+            className={`w-9 h-9 rounded-full flex items-center justify-center shadow active:scale-90 transition-all ${
+              isLoadingAudio ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 text-white animate-player-buffering' : 'bg-white text-black'
+            }`}
           >
-            {isPlaying ? (
+            {isLoadingAudio ? (
+              <RefreshCw className="w-4 h-4 text-white animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-4 h-4 fill-black" />
             ) : (
               <Play className="w-4 h-4 fill-black translate-x-0.5" />
@@ -872,7 +1050,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
 
       {/* ================= 4. MOBILE FULL-SCREEN EXPANDED NOW PLAYING MODAL ================= */}
       {isExpandedMobile && (
-        <div className="md:hidden fixed inset-0 z-50 bg-[#0d0d11] text-white flex flex-col p-5 animate-in slide-in-from-bottom duration-200 overflow-y-auto">
+        <div className="lg:hidden fixed inset-0 z-50 bg-[#0d0d11] text-white flex flex-col p-5 animate-in slide-in-from-bottom duration-200 overflow-y-auto">
           {/* Modal Header */}
           <div className="flex items-center justify-between mb-3">
             <button 
@@ -891,11 +1069,16 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                 Player
               </button>
               <button
-                onClick={() => setMobileTab('lyrics')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                id="mobile-modal-lyrics-tab-btn"
+                onClick={() => {
+                  setMobileTab('lyrics');
+                  handleFetchLyricsOnline(track);
+                }}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                   mobileTab === 'lyrics' ? 'bg-pink-600 text-white' : 'text-neutral-400'
                 }`}
               >
+                {isFetchingLyrics && <RefreshCw className="w-3 h-3 animate-spin text-pink-300" />}
                 Lyrics
               </button>
               <button
@@ -920,8 +1103,20 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                 <img 
                   src={track.image_url} 
                   alt={track.title} 
-                  className="w-full h-full object-cover" 
+                  className={`w-full h-full object-cover ${isLoadingAudio ? 'scale-105 opacity-80' : ''}`} 
                 />
+                {isLoadingAudio && (
+                  <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center gap-2">
+                    <div className="flex items-end gap-1.5 h-6">
+                      <span className="w-1.5 bg-[#ff2d55] rounded-full mini-equalizer-bar-1" />
+                      <span className="w-1.5 bg-rose-400 rounded-full mini-equalizer-bar-2" />
+                      <span className="w-1.5 bg-amber-400 rounded-full mini-equalizer-bar-3" />
+                    </div>
+                    <span className="text-xs font-mono font-bold text-white px-3 py-1 rounded-full bg-black/70 border border-pink-500/40 animate-pulse">
+                      Buffering Audio...
+                    </span>
+                  </div>
+                )}
                 <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-full text-xs font-mono font-bold text-amber-400 border border-neutral-700/60">
                   {analysis.camelot} • {analysis.bpm} BPM
                 </div>
@@ -949,7 +1144,7 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                   className="w-full h-1.5 bg-neutral-700 rounded-full appearance-none accent-[#ff2d55]"
                 />
                 <div className="flex justify-between text-xs font-mono text-neutral-400">
-                  <span>{formatTime(currentTime)}</span>
+                  <span>{isLoadingAudio && currentTime === 0 ? '--:--' : formatTime(currentTime)}</span>
                   <span>{formatTime(currentDuration)}</span>
                 </div>
               </div>
@@ -964,9 +1159,17 @@ export const SpotifyPlayerBar: React.FC<SpotifyPlayerBarProps> = ({
                 </button>
                 <button 
                   onClick={onTogglePlay} 
-                  className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl active:scale-95 transition-transform"
+                  className={`w-16 h-16 rounded-full flex items-center justify-center shadow-xl active:scale-95 transition-transform ${
+                    isLoadingAudio ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 text-white animate-player-buffering' : 'bg-white text-black'
+                  }`}
                 >
-                  {isPlaying ? <Pause className="w-8 h-8 fill-black" /> : <Play className="w-8 h-8 fill-black translate-x-0.5" />}
+                  {isLoadingAudio ? (
+                    <RefreshCw className="w-7 h-7 text-white animate-spin" />
+                  ) : isPlaying ? (
+                    <Pause className="w-8 h-8 fill-black" />
+                  ) : (
+                    <Play className="w-8 h-8 fill-black translate-x-0.5" />
+                  )}
                 </button>
                 <button onClick={onNextTrack} className="p-2 text-white active:scale-90 transition-transform">
                   <SkipForward className="w-7 h-7 fill-current" />

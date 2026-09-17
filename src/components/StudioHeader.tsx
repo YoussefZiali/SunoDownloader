@@ -53,8 +53,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             </button>
           </div>
 
-          {/* Primary Workstation Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-1.5 p-1 rounded-2xl bg-neutral-900/90 border border-neutral-800">
+          {/* Primary Workstation Navigation Tabs (Desktop only; tablet & phone use bottom navbar) */}
+          <nav className="hidden lg:flex items-center gap-1.5 p-1 rounded-2xl bg-neutral-900/90 border border-neutral-800">
             
             {/* Tab 0: Explore & Discover */}
             <button
@@ -112,7 +112,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               <span>Auto-DJ</span>
             </button>
 
-            {/* Tab 4: Suno Core Ingest */}
+            {/* Tab 4: Suno Core Ingest / Download */}
             <button
               id="header-tab-ingest"
               onClick={() => onChangeTab('ingest')}
@@ -123,7 +123,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               }`}
             >
               <Zap className="w-4 h-4 text-amber-400" />
-              <span>Import Suno</span>
+              <span>Download Suno</span>
             </button>
 
             {/* Tab 5: Exports & Vault */}
@@ -148,18 +148,6 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
 
           {/* Right Action Icons */}
           <div className="flex items-center gap-2">
-            
-            {/* Offline Vault Status Badge */}
-            {offlineCount > 0 && (
-              <button
-                onClick={() => onChangeTab('exports')}
-                title={`${offlineCount} tracks saved offline`}
-                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-neutral-900 border border-neutral-800 text-[11px] font-bold text-emerald-400 cursor-pointer"
-              >
-                <HardDrive className="w-3.5 h-3.5" />
-                <span>{offlineCount} offline</span>
-              </button>
-            )}
 
             {/* History Drawer Trigger */}
             <button
@@ -189,59 +177,6 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
 
           </div>
         </div>
-
-        {/* Mobile Sub-Navigation Bar */}
-        <div className="flex md:hidden items-center justify-between gap-1 mt-2.5 pt-2.5 border-t border-neutral-800/60 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => onChangeTab('explore')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'explore' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Explore
-          </button>
-          <button
-            onClick={() => onChangeTab('library')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'library' || activeTab === 'playlist' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Library
-          </button>
-          <button
-            onClick={() => onChangeTab('studio')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'studio' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Studio DAW
-          </button>
-          <button
-            onClick={() => onChangeTab('dj_creative')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'dj_creative' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Auto-DJ
-          </button>
-          <button
-            onClick={() => onChangeTab('ingest')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'ingest' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Import
-          </button>
-          <button
-            onClick={() => onChangeTab('exports')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-colors ${
-              activeTab === 'exports' ? 'bg-[#ff2d55] text-white' : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            Vault
-          </button>
-        </div>
-
       </div>
     </header>
   );

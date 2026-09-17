@@ -38,7 +38,7 @@ import { SpotifyPlayerBar } from './components/SpotifyPlayerBar';
 
 export default function App() {
   // Navigation State
-  const [activeTab, setActiveTab] = useState<ActiveTab>('library');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('explore');
 
   // Active track & playlist catalog
   const [currentTrack, setCurrentTrack] = useState<SunoTrack | null>(INITIAL_TRACKS[0] || null);
@@ -65,6 +65,8 @@ export default function App() {
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
 
   // Offline Stored Track IDs
   const [offlineTrackIds, setOfflineTrackIds] = useState<Set<string>>(new Set());
@@ -187,16 +189,51 @@ export default function App() {
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
+    const onLoadStart = () => {
+      setIsLoadingAudio(true);
+    };
+
+    const onWaiting = () => {
+      setIsLoadingAudio(true);
+    };
+
+    const onCanPlay = () => {
+      setIsLoadingAudio(false);
+      setLoadingTrackId(null);
+    };
+
+    const onPlaying = () => {
+      setIsLoadingAudio(false);
+      setLoadingTrackId(null);
+      setIsPlaying(true);
+    };
+
+    const onError = () => {
+      setIsLoadingAudio(false);
+      setLoadingTrackId(null);
+      setIsPlaying(false);
+    };
+
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
+    audio.addEventListener('loadstart', onLoadStart);
+    audio.addEventListener('waiting', onWaiting);
+    audio.addEventListener('canplay', onCanPlay);
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('loadstart', onLoadStart);
+      audio.removeEventListener('waiting', onWaiting);
+      audio.removeEventListener('canplay', onCanPlay);
+      audio.removeEventListener('playing', onPlaying);
+      audio.removeEventListener('error', onError);
     };
   }, []);
 
@@ -250,13 +287,24 @@ export default function App() {
     if (currentTrack?.id === track.id) {
       toggleGlobalPlay();
     } else {
+      setLoadingTrackId(track.id);
+      setIsLoadingAudio(true);
       setCurrentTrack(track);
       if (globalAudioRef.current) {
         const streamUrl = track.id ? `/api/suno/stream/${track.id}.mp3` : track.audio_url;
         globalAudioRef.current.src = streamUrl;
         globalAudioRef.current.currentTime = 0;
         setCurrentTime(0);
-        globalAudioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+        globalAudioRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+            setIsLoadingAudio(false);
+            setLoadingTrackId(null);
+          })
+          .catch(() => {
+            setIsLoadingAudio(false);
+            setLoadingTrackId(null);
+          });
       }
     }
   };
@@ -563,6 +611,9 @@ export default function App() {
     if (tracks.length === 0) return;
     batchAbortRef.current = false;
 
+    // Switch to Download Suno screen so user can watch the download process in real-time
+    setActiveTab('ingest');
+
     setBatchStatus({
       isActive: true,
       totalTracks: tracks.length,
@@ -675,13 +726,15 @@ export default function App() {
       />
 
       {/* Main Workstation Tab Views */}
-      <main className="w-full pb-36 md:pb-28">
+      <main className="w-full pb-36 lg:pb-28">
         {activeTab === 'explore' && (
           <ExploreDiscoverView
             playlists={playlists}
             allTracks={allTracks}
             activeTrack={currentTrack}
             isPlaying={isPlaying}
+            isLoadingAudio={isLoadingAudio}
+            loadingTrackId={loadingTrackId}
             onPlayTrack={handlePlaySpecificTrack}
             onPlayPlaylist={(playlist) => {
               setSelectedPlaylist(playlist);
@@ -706,6 +759,14 @@ export default function App() {
               setShowSpatial8D(true);
             }}
             onQuickDownload={handleDownloadTrack}
+            onDownloadBatchZip={handleDownloadBatchZip}
+            onOpenSunoIngest={(urlOrId) => {
+              setActiveTab('ingest');
+              if (urlOrId) {
+                handleFetchUrl(urlOrId);
+              }
+            }}
+            onOpenBulkImporter={() => setShowBulkImporter(true)}
           />
         )}
 
@@ -715,6 +776,8 @@ export default function App() {
             allPlaylists={playlists}
             activeTrack={currentTrack}
             isPlaying={isPlaying}
+            isLoadingAudio={isLoadingAudio}
+            loadingTrackId={loadingTrackId}
             onPlayTrack={handlePlaySpecificTrack}
             onPlayPlaylist={(pl, startTrackId) => {
               setSelectedPlaylist(pl);
@@ -758,6 +821,8 @@ export default function App() {
             playlists={playlists}
             activeTrack={currentTrack}
             isPlaying={isPlaying}
+            isLoadingAudio={isLoadingAudio}
+            loadingTrackId={loadingTrackId}
             onPlayTrack={handlePlaySpecificTrack}
             onSelectPlaylist={(playlist) => {
               setSelectedPlaylist(playlist);
@@ -1084,6 +1149,8 @@ export default function App() {
         <SpotifyPlayerBar
           track={currentTrack}
           isPlaying={isPlaying}
+          isLoadingAudio={isLoadingAudio}
+          loadingTrackId={loadingTrackId}
           currentTime={currentTime}
           duration={duration}
           volume={volume}

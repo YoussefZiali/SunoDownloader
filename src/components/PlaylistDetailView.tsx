@@ -1,9 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Play, Pause, Download, ArrowLeft, Shuffle, Sparkles, 
   Clock, Disc, Music, Sliders, Mic2, Orbit, Heart, 
   Search, CheckCircle2, HardDrive, Share2, FileText,
-  Layers, ArrowUpDown, Filter, ChevronRight, Check
+  Layers, ArrowUpDown, Filter, ChevronRight, Check, RefreshCw,
+  MoreVertical, X
 } from 'lucide-react';
 import { SunoTrack, SunoPlaylist, AudioFormat } from '../types';
 import { estimateMusicAttributes } from '../utils/musicAnalyzer';
@@ -12,6 +13,8 @@ interface PlaylistDetailViewProps {
   playlist: SunoPlaylist;
   activeTrack: SunoTrack | null;
   isPlaying: boolean;
+  isLoadingAudio?: boolean;
+  loadingTrackId?: string | null;
   onPlayTrack: (track: SunoTrack) => void;
   onPlayPlaylist: (playlist: SunoPlaylist, startTrackId?: string) => void;
   onBack: () => void;
@@ -29,6 +32,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   playlist,
   activeTrack,
   isPlaying,
+  isLoadingAudio = false,
+  loadingTrackId = null,
   onPlayTrack,
   onPlayPlaylist,
   onBack,
@@ -45,10 +50,24 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   const [selectedFormat, setSelectedFormat] = useState<AudioFormat>('mp3');
   const [copiedLink, setCopiedLink] = useState(false);
   const [sortBy, setSortBy] = useState<'default' | 'title' | 'bpm' | 'key'>('default');
+  const [mobileMenuTrackId, setMobileMenuTrackId] = useState<string | null>(null);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [playlist.id]);
+
+  // Close mobile dropdown menu when tapping outside
+  useEffect(() => {
+    if (!mobileMenuTrackId) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.mobile-track-dropdown-container')) {
+        setMobileMenuTrackId(null);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick);
+  }, [mobileMenuTrackId]);
 
   const tracks = playlist.tracks || [];
 
@@ -321,6 +340,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           ) : (
             filteredTracks.map((track, index) => {
               const isCurrent = activeTrack?.id === track.id;
+              const isThisBuffering = (loadingTrackId === track.id && isLoadingAudio) || (isCurrent && isLoadingAudio);
               const isOffline = offlineTrackIds.has(track.id);
 
               return (
@@ -338,7 +358,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     
                     {/* Index or Animated Play Icon */}
                     <div className="w-6 text-center text-xs font-mono font-bold text-neutral-500 shrink-0">
-                      {isCurrent && isPlaying ? (
+                      {isThisBuffering ? (
+                        <RefreshCw className="w-4 h-4 text-pink-400 animate-spin mx-auto" />
+                      ) : isCurrent && isPlaying ? (
                         <div className="flex items-end justify-center gap-[2px] h-4">
                           <span className="w-1 bg-[#ff2d55] animate-bounce h-3 rounded-full" />
                           <span className="w-1 bg-rose-400 animate-bounce h-4 delay-75 rounded-full" />
@@ -351,14 +373,18 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
                     {/* Artwork & Hover Play Button */}
                     <div 
-                      className="relative w-12 h-12 rounded-xl overflow-hidden bg-neutral-800 shrink-0 cursor-pointer shadow-md"
+                      className={`relative w-12 h-12 rounded-xl overflow-hidden bg-neutral-800 shrink-0 cursor-pointer shadow-md transition-all ${
+                        isThisBuffering ? 'ring-2 ring-pink-500 shadow-pink-500/30' : ''
+                      }`}
                       onClick={() => onPlayTrack(track)}
                     >
                       <img src={track.image_url} alt={track.title} className="w-full h-full object-cover" />
                       <div className={`absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity ${
-                        isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        isThisBuffering || isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}>
-                        {isCurrent && isPlaying ? (
+                        {isThisBuffering ? (
+                          <RefreshCw className="w-5 h-5 text-white animate-spin" />
+                        ) : isCurrent && isPlaying ? (
                           <Pause className="w-5 h-5 text-white fill-current" />
                         ) : (
                           <Play className="w-5 h-5 text-white fill-current ml-0.5" />
@@ -412,7 +438,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   </div>
 
                   {/* Right: Creative Modules & Download Actions */}
-                  <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 text-neutral-400">
+                  {/* Desktop / Tablet View (sm and up): Full inline buttons */}
+                  <div className="hidden sm:flex items-center gap-1.5 shrink-0 text-neutral-400">
                     
                     {/* Studio DAW */}
                     <button
@@ -470,6 +497,105 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                       <Download className="w-4 h-4" />
                     </button>
 
+                  </div>
+
+                  {/* Phone Screen View (<sm): Compact Quick Download + Dropdown Menu */}
+                  <div className="flex sm:hidden items-center gap-1 shrink-0 text-neutral-400 relative mobile-track-dropdown-container">
+                    {/* Quick Single Download */}
+                    <button
+                      onClick={() => onQuickDownload(track, selectedFormat)}
+                      className="p-2 rounded-xl hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                      title={`Download ${selectedFormat.toUpperCase()}`}
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+
+                    {/* Dropdown Options Button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMobileMenuTrackId(mobileMenuTrackId === track.id ? null : track.id);
+                      }}
+                      className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                        mobileMenuTrackId === track.id ? 'bg-[#ff2d55] text-white' : 'hover:text-white hover:bg-neutral-800'
+                      }`}
+                      title="Track Options & Tools"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {/* Mobile Dropdown Popover */}
+                    {mobileMenuTrackId === track.id && (
+                      <div 
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute right-0 top-12 w-56 p-2 rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl z-40 space-y-1 animate-in fade-in zoom-in-95 duration-150"
+                      >
+                        <div className="px-2.5 py-1.5 border-b border-neutral-800 text-[10px] font-mono text-neutral-400 flex items-center justify-between">
+                          <span>{track.analysis.camelot} • {track.analysis.bpm} BPM</span>
+                          <span>{track.duration_formatted}</span>
+                        </div>
+
+                        {/* DAW Studio */}
+                        <button
+                          onClick={() => {
+                            setMobileMenuTrackId(null);
+                            onOpenStudioDaw(track);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                        >
+                          <Sliders className="w-3.5 h-3.5 text-[#ff2d55]" />
+                          <span>Open in Studio DAW</span>
+                        </button>
+
+                        {/* Karaoke */}
+                        <button
+                          onClick={() => {
+                            setMobileMenuTrackId(null);
+                            onOpenKaraoke(track);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                        >
+                          <Mic2 className="w-3.5 h-3.5 text-pink-400" />
+                          <span>Sing Karaoke & Lyrics</span>
+                        </button>
+
+                        {/* 8D Spatial Audio */}
+                        <button
+                          onClick={() => {
+                            setMobileMenuTrackId(null);
+                            onOpenSpatial8D(track);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                        >
+                          <Orbit className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>360° 8D Spatial Audio</span>
+                        </button>
+
+                        {/* Chords & MIDI */}
+                        <button
+                          onClick={() => {
+                            setMobileMenuTrackId(null);
+                            onOpenChordMidi(track);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                        >
+                          <Music className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Chord Progression & MIDI</span>
+                        </button>
+
+                        {/* Save Offline */}
+                        <button
+                          onClick={() => {
+                            setMobileMenuTrackId(null);
+                            onSaveOffline(track);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                        >
+                          <HardDrive className={`w-3.5 h-3.5 ${isOffline ? 'text-emerald-400' : 'text-neutral-400'}`} />
+                          <span>{isOffline ? 'Saved in Vault' : 'Save to Offline Vault'}</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                 </div>

@@ -63,11 +63,11 @@ export const SunoCoreIngestView: React.FC<SunoCoreIngestViewProps> = ({
           </div>
           
           <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight font-['Syne']">
-            Suno Core Ingest & Stream Engine
+            Download Suno & Stream Engine
           </h1>
           
           <p className="text-neutral-400 text-xs sm:text-sm max-w-md mx-auto leading-relaxed">
-            Resolve any Suno song link, playlist URL, or track ID into lossless 48kHz audio streams, prompt DNA, and multi-format DAW stems.
+            Download and resolve any Suno song link, playlist URL, or track ID into lossless 48kHz audio streams, prompt DNA, and multi-format packages.
           </p>
         </div>
 

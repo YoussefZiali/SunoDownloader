@@ -74,17 +74,17 @@ export const PromptExtractorModal: React.FC<PromptExtractorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-4 bg-black/85 backdrop-blur-xl animate-fadeIn">
-      <div className="relative w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[88vh]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 md:p-4 lg:p-6 bg-black/90 backdrop-blur-2xl animate-fadeIn">
+      <div className="relative w-full h-full md:h-auto md:max-h-[90vh] max-w-2xl bg-neutral-900 md:border border-neutral-800 md:rounded-3xl shadow-2xl overflow-hidden flex flex-col">
         
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-neutral-800 bg-neutral-950/60 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+        {/* Sticky Header with Safe-Area Inset */}
+        <div className="sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-5 border-b border-neutral-800 bg-neutral-950/95 backdrop-blur-xl shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2 truncate">
+              <h2 className="text-sm sm:text-lg font-bold text-white flex items-center gap-2 truncate">
                 <span>Prompt & Style Recipe</span>
               </h2>
               <p className="text-xs text-neutral-400 truncate">
@@ -94,14 +94,15 @@ export const PromptExtractorModal: React.FC<PromptExtractorModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors shrink-0"
+            aria-label="Close Prompt Recipe"
+            className="p-2 sm:p-2.5 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white transition-all shrink-0 cursor-pointer shadow-md flex items-center justify-center border border-neutral-700 active:scale-95"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6 flex-1 custom-scrollbar pb-[max(2rem,env(safe-area-inset-bottom))]">
           
           {/* Song Overview */}
           <div className="flex items-center gap-4 p-4 bg-neutral-950 rounded-xl border border-neutral-800">

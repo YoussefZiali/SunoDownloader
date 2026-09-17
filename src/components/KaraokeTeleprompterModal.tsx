@@ -73,6 +73,17 @@ export const KaraokeTeleprompterModal: React.FC<KaraokeTeleprompterModalProps> =
     }
   }, [track?.id, track?.prompt]);
 
+  // Automatically retrieve lyrics when modal opens if prompt is missing or placeholder
+  const fetchedModalTrackIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isOpen && track?.id && fetchedModalTrackIdRef.current !== track.id) {
+      fetchedModalTrackIdRef.current = track.id;
+      if (!track.prompt || !track.prompt.trim()) {
+        handleRetrieveLyrics();
+      }
+    }
+  }, [isOpen, track?.id]);
+
   // Setup internal audio engine only if not externally controlled
   useEffect(() => {
     if (!isOpen || !track || isExternalControlled) {
@@ -239,12 +250,12 @@ export const KaraokeTeleprompterModal: React.FC<KaraokeTeleprompterModalProps> =
   }[fontSize];
 
   return (
-    <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-2xl animate-fadeIn ${isFullscreen ? 'p-0 w-screen h-screen' : 'p-2 sm:p-4'}`}>
-      <div className={`relative w-full ${isFullscreen ? 'h-screen w-screen max-w-none rounded-none border-none' : 'max-w-4xl max-h-[85vh] sm:max-h-[88vh] h-[85vh] sm:h-[88vh] rounded-3xl border border-neutral-800'} bg-[#0a0a0f] shadow-2xl overflow-hidden flex flex-col`}>
+    <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-2xl animate-fadeIn ${isFullscreen ? 'p-0 w-screen h-screen' : 'p-0 md:p-4 lg:p-6'}`}>
+      <div className={`relative w-full ${isFullscreen ? 'h-screen w-screen max-w-none rounded-none border-none' : 'h-full md:h-auto md:max-h-[90vh] max-w-4xl md:rounded-3xl md:border border-neutral-800'} bg-[#0a0a0f] shadow-2xl overflow-hidden flex flex-col`}>
         
-        {/* Top Header Bar */}
-        <div className="flex items-center justify-between p-3.5 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/70 backdrop-blur-md shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+        {/* Top Header Bar with Safe-Area Inset */}
+        <div className="sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-5 border-b border-neutral-800/80 bg-neutral-900/95 backdrop-blur-xl shrink-0 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden bg-neutral-800 shrink-0 border border-pink-500/30">
               <img src={track.image_url} alt={track.title} className="w-full h-full object-cover" />
               {isPlaying && (
@@ -357,7 +368,8 @@ export const KaraokeTeleprompterModal: React.FC<KaraokeTeleprompterModalProps> =
             {/* Close Button */}
             <button
               onClick={onClose}
-              className="p-1.5 sm:p-2 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+              aria-label="Close Karaoke Teleprompter"
+              className="p-2 sm:p-2.5 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white transition-all shrink-0 cursor-pointer shadow-md flex items-center justify-center border border-neutral-700 active:scale-95"
             >
               <X className="w-5 h-5" />
             </button>

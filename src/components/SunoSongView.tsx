@@ -24,6 +24,7 @@ import { SongMashupRemixerModal } from './SongMashupRemixerModal';
 import { AutoDjMixerModal } from './AutoDjMixerModal';
 import { OfflineLibrarySyncModal } from './OfflineLibrarySyncModal';
 import { estimateMusicAttributes } from '../utils/musicAnalyzer';
+import { TrackCardShimmer, TrackRowShimmer, ShimmerSkeleton } from './ShimmerSkeleton';
 
 interface SunoSongViewProps {
   currentTrack: SunoTrack | null;
@@ -538,8 +539,36 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
 
           {/* SECTION 2: BEST OF V6 PLAYLIST DIRECTLY UNDER SUNO DOWNLOADER */}
           <div className="space-y-6 pt-6 border-t border-neutral-800/80">
-            {/* Playlist Header Card */}
-            <div className="p-6 rounded-3xl bg-neutral-900 border border-neutral-800 shadow-xl flex flex-col sm:flex-row items-center gap-6">
+            {isLoadingUrl ? (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-[#ff2d55]/10 border border-[#ff2d55]/30 text-rose-300">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#ff2d55] shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold tracking-wide">
+                      Retrieving high-bitrate Suno audio stream & analyzing track attributes...
+                    </p>
+                    <p className="text-[11px] text-neutral-400">
+                      Generating waveform, Camelot key, and BPM metrics
+                    </p>
+                  </div>
+                </div>
+
+                {/* Shimmer Track Card Skeleton */}
+                <TrackCardShimmer />
+
+                {/* Shimmer Playlist Rows Skeleton */}
+                <div className="p-6 rounded-3xl bg-neutral-900/60 border border-neutral-800/80 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-neutral-800/60">
+                    <div className="h-5 w-48 bg-neutral-800 rounded-lg animate-shimmer" />
+                    <div className="h-4 w-28 bg-neutral-800 rounded-lg animate-shimmer" />
+                  </div>
+                  <TrackRowShimmer count={4} />
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Playlist Header Card */}
+                <div className="p-6 rounded-3xl bg-neutral-900 border border-neutral-800 shadow-xl flex flex-col sm:flex-row items-center gap-6">
               <div className="w-32 h-32 sm:w-36 sm:h-36 rounded-2xl overflow-hidden bg-neutral-950 shrink-0 border border-neutral-800 shadow-lg relative group">
                 <img
                   src={activePlaylist.cover_url || activePlaylist.tracks[0]?.image_url}
@@ -698,8 +727,10 @@ export const SunoSongView: React.FC<SunoSongViewProps> = ({
                 ))}
               </div>
             </div>
-          </div>
-        </main>
+          </>
+        )}
+      </div>
+    </main>
 
         {/* Global Footer */}
         <Footer 
