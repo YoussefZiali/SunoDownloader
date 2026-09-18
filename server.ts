@@ -16,6 +16,7 @@ if (!fs.existsSync(CACHE_DIR)) {
 
 // In-flight transcode promises to avoid duplicate ffmpeg processes for the same track & format
 const activeTranscodes = new Map<string, Promise<string>>();
+const activeDecryptions = new Map<string, Promise<string>>();
 
 // Fetches rights and decrypts Suno's AES-CTR encrypted audio stream into a valid local audio file
 async function getDecryptedAudioPath(trackId: string): Promise<string> {
@@ -24,123 +25,136 @@ async function getDecryptedAudioPath(trackId: string): Promise<string> {
     return decryptedPath;
   }
 
-  // 1. Fetch decryption rights from the Suno rights service (with usesuno Origin & Referer)
-  let rights: any = null;
-  const rightsEndpoints = [
-    'https://yellow-salad.aibiei.com/rights',
-  ];
-
-  for (const ep of rightsEndpoints) {
-    try {
-      const rightsRes = await fetch(ep, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'https://usesuno.com',
-          'Referer': 'https://usesuno.com/tools/downloader/',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-        body: JSON.stringify({
-          content_params: { content_id: trackId, content_type: 'clip' },
-        }),
-      });
-
-      if (rightsRes.ok) {
-        rights = await rightsRes.json();
-        if (rights && rights.key && rights.iv && rights.glt) {
-          break;
-        }
-      }
-    } catch (e: any) {
-      console.warn(`Rights fetch from ${ep} failed for ${trackId}:`, e.message);
-    }
+  if (activeDecryptions.has(trackId)) {
+    return activeDecryptions.get(trackId)!;
   }
 
-  if (rights && rights.key && rights.iv && rights.glt) {
+  const promise = (async () => {
     try {
-      // Derive userKey = sha256(rights.glt)
-      const userKey = crypto.createHash('sha256').update(rights.glt).digest();
+      // 1. Fetch decryption rights from the Suno rights service (with usesuno Origin & Referer)
+      let rights: any = null;
+      const rightsEndpoints = [
+        'https://yellow-salad.aibiei.com/rights',
+      ];
 
-      // Unwrap helper using AES-256-GCM with AAD set to trackId
-      const unwrap = (wrappedBase64: string): Buffer => {
-        const buf = Buffer.from(wrappedBase64, 'base64');
-        const iv = buf.subarray(0, 12);
-        const ciphertextWithTag = buf.subarray(12);
-        const ciphertext = ciphertextWithTag.subarray(0, ciphertextWithTag.length - 16);
-        const tag = ciphertextWithTag.subarray(ciphertextWithTag.length - 16);
-        const decipher = crypto.createDecipheriv('aes-256-gcm', userKey, iv);
-        decipher.setAAD(Buffer.from(trackId, 'utf8'));
-        decipher.setAuthTag(tag);
-        return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-      };
+      for (const ep of rightsEndpoints) {
+        try {
+          const rightsRes = await fetch(ep, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Origin': 'https://usesuno.com',
+              'Referer': 'https://usesuno.com/tools/downloader/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+            body: JSON.stringify({
+              content_params: { content_id: trackId, content_type: 'clip' },
+            }),
+          });
 
-      const contentKey = unwrap(rights.key);
-      const contentIv = unwrap(rights.iv);
-
-      // Fetch encrypted audio stream from CloudFront
-      const encAudioUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackId}.m4a`;
-      const encRes = await fetch(encAudioUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-      });
-
-      if (!encRes.ok) {
-        throw new Error(`Failed to fetch encrypted audio stream: HTTP ${encRes.status}`);
-      }
-
-      const ct = (encRes.headers.get('content-type') || '').toLowerCase();
-      if (ct.includes('text/html') || ct.includes('application/json')) {
-        throw new Error(`CloudFront returned ${ct} instead of audio stream`);
-      }
-
-      const encBuffer = Buffer.from(await encRes.arrayBuffer());
-
-      // Decrypt audio using AES-128-CTR
-      const algo = contentKey.length === 32 ? 'aes-256-ctr' : 'aes-128-ctr';
-      const decipher = crypto.createDecipheriv(algo, contentKey, contentIv);
-      const decryptedBuffer = Buffer.concat([decipher.update(encBuffer), decipher.final()]);
-
-      if (decryptedBuffer.length > 50000 && !decryptedBuffer.subarray(0, 50).toString().includes('<html')) {
-        fs.writeFileSync(decryptedPath, decryptedBuffer);
-        return decryptedPath;
-      }
-    } catch (err: any) {
-      console.warn(`Audio decryption failed for ${trackId}:`, err.message);
-    }
-  }
-
-  // Fallback: Direct CDN stream if accessible (legacy public tracks)
-  const candidateUrls = [
-    `https://cdn1.suno.ai/${trackId}.mp4`,
-    `https://cdn1.suno.ai/${trackId}.mp3`,
-  ];
-
-  for (const cdnUrl of candidateUrls) {
-    try {
-      const directRes = await fetch(cdnUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-      });
-      if (directRes.ok) {
-        const ct = (directRes.headers.get('content-type') || '').toLowerCase();
-        if (ct.includes('text/html') || ct.includes('application/json')) {
-          continue;
-        }
-        const buf = Buffer.from(await directRes.arrayBuffer());
-        if (buf.length > 50000 && !buf.subarray(0, 50).toString().includes('<html')) {
-          fs.writeFileSync(decryptedPath, buf);
-          return decryptedPath;
+          if (rightsRes.ok) {
+            rights = await rightsRes.json();
+            if (rights && rights.key && rights.iv && rights.glt) {
+              break;
+            }
+          }
+        } catch (e: any) {
+          console.warn(`Rights fetch from ${ep} failed for ${trackId}:`, e.message);
         }
       }
-    } catch {
-      // continue
-    }
-  }
 
-  throw new Error(`Unable to fetch or decrypt audio for track ${trackId}`);
+      if (rights && rights.key && rights.iv && rights.glt) {
+        try {
+          // Derive userKey = sha256(rights.glt)
+          const userKey = crypto.createHash('sha256').update(rights.glt).digest();
+
+          // Unwrap helper using AES-256-GCM with AAD set to trackId
+          const unwrap = (wrappedBase64: string): Buffer => {
+            const buf = Buffer.from(wrappedBase64, 'base64');
+            const iv = buf.subarray(0, 12);
+            const ciphertextWithTag = buf.subarray(12);
+            const ciphertext = ciphertextWithTag.subarray(0, ciphertextWithTag.length - 16);
+            const tag = ciphertextWithTag.subarray(ciphertextWithTag.length - 16);
+            const decipher = crypto.createDecipheriv('aes-256-gcm', userKey, iv);
+            decipher.setAAD(Buffer.from(trackId, 'utf8'));
+            decipher.setAuthTag(tag);
+            return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+          };
+
+          const contentKey = unwrap(rights.key);
+          const contentIv = unwrap(rights.iv);
+
+          // Fetch encrypted audio stream from CloudFront
+          const encAudioUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${trackId}.m4a`;
+          const encRes = await fetch(encAudioUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+          });
+
+          if (!encRes.ok) {
+            throw new Error(`Failed to fetch encrypted audio stream: HTTP ${encRes.status}`);
+          }
+
+          const ct = (encRes.headers.get('content-type') || '').toLowerCase();
+          if (ct.includes('text/html') || ct.includes('application/json')) {
+            throw new Error(`CloudFront returned ${ct} instead of audio stream`);
+          }
+
+          const encBuffer = Buffer.from(await encRes.arrayBuffer());
+
+          // Decrypt audio using AES-128-CTR
+          const algo = contentKey.length === 32 ? 'aes-256-ctr' : 'aes-128-ctr';
+          const decipher = crypto.createDecipheriv(algo, contentKey, contentIv);
+          const decryptedBuffer = Buffer.concat([decipher.update(encBuffer), decipher.final()]);
+
+          if (decryptedBuffer.length > 50000 && !decryptedBuffer.subarray(0, 50).toString().includes('<html')) {
+            fs.writeFileSync(decryptedPath, decryptedBuffer);
+            return decryptedPath;
+          }
+        } catch (err: any) {
+          console.warn(`Audio decryption failed for ${trackId}:`, err.message);
+        }
+      }
+
+      // Fallback: Direct CDN stream if accessible (legacy public tracks)
+      const candidateUrls = [
+        `https://cdn1.suno.ai/${trackId}.mp4`,
+        `https://cdn1.suno.ai/${trackId}.mp3`,
+      ];
+
+      for (const cdnUrl of candidateUrls) {
+        try {
+          const directRes = await fetch(cdnUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+          });
+          if (directRes.ok) {
+            const ct = (directRes.headers.get('content-type') || '').toLowerCase();
+            if (ct.includes('text/html') || ct.includes('application/json')) {
+              continue;
+            }
+            const buf = Buffer.from(await directRes.arrayBuffer());
+            if (buf.length > 50000 && !buf.subarray(0, 50).toString().includes('<html')) {
+              fs.writeFileSync(decryptedPath, buf);
+              return decryptedPath;
+            }
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      throw new Error(`Unable to fetch or decrypt audio for track ${trackId}`);
+    } finally {
+      activeDecryptions.delete(trackId);
+    }
+  })();
+
+  activeDecryptions.set(trackId, promise);
+  return promise;
 }
 
 // Helper to fetch and cache track cover artwork
@@ -1171,19 +1185,20 @@ app.get('/api/suno/stream/:id', async (req: Request, res: Response) => {
   const trackId = uuidMatch ? uuidMatch[0] : rawId.replace(/\.(mp3|m4a|wav|mp4)$/i, '').trim();
 
   try {
-    const filePath = await transcodeTrack(trackId, 'mp3', '320k');
-    res.setHeader('Content-Type', 'audio/mpeg');
+    // Fast path: Stream raw decrypted audio (M4A/AAC) directly for instant browser playback without ffmpeg CPU overhead
+    const rawPath = await getDecryptedAudioPath(trackId);
+    res.setHeader('Content-Type', 'audio/mp4');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Accept-Ranges', 'bytes');
-    return res.sendFile(filePath, { acceptRanges: true });
+    return res.sendFile(rawPath, { acceptRanges: true });
   } catch (err: any) {
-    console.warn(`Stream transcode fallback for ${trackId}:`, err.message);
+    console.warn(`Stream raw fetch fallback for ${trackId}:`, err.message);
     try {
-      const rawPath = await getDecryptedAudioPath(trackId);
-      res.setHeader('Content-Type', 'audio/mp4');
+      const filePath = await transcodeTrack(trackId, 'mp3', '320k');
+      res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(rawPath, { acceptRanges: true });
+      return res.sendFile(filePath, { acceptRanges: true });
     } catch (fallbackErr: any) {
       console.error(`Stream delivery failure for ${trackId}:`, fallbackErr.message);
       return res.status(500).json({ error: `Audio stream unavailable: ${err.message}` });
